@@ -267,13 +267,15 @@ matrix:
         - TEST="package build"
       script:
         - echo "Building binary packages"
-      before_deploy:
         - git submodule update --init libvmi xen drakvuf-doppelganging
         - travis_wait 60 sh package/build.sh;
         - git config --local user.name "drakvuf-builds"
         - git config --local user.email "drakvuf-builds@tklsoftware.com"
         - export TRAVIS_TAG=${TRAVIS_TAG:-$(date +'%Y%m%d%H%M%S')-$(git log --format=%h -1)}
         - git tag $TRAVIS_TAG
+      branches:
+        only:
+          - master
       cache:
         directories:
           - package/cache
