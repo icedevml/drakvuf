@@ -281,6 +281,8 @@ matrix:
           - package/cache
       deploy:
         provider: releases
+        api_key:
+          secure: "$GITHUB_TOKEN"
         file:
           - package/out/**/*
         skip_cleanup: true
