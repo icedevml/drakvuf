@@ -279,9 +279,6 @@ matrix:
           - package/cache
       deploy:
         provider: releases
-        api_key:
-          secure: "$GITHUB_TOKEN"
-        repo: tklengyel/drakvuf-builds
         file:
           - package/out/**/*
         skip_cleanup: true
