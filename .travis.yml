@@ -282,7 +282,7 @@ matrix:
       deploy:
         provider: releases
         api_key:
-          secure: "$GITHUB_TOKEN"
+          secure: "kRR921mve4CywvJCmn06dpxtPEvPN9c4+1ONzYBZuYbJwYdSBbsp1sBvF0TZ6BXuAFBVOomiEDzPH0PYdN+WwzbiOacQ5l63LaqHLbhsFhmHK4kmYCiXYUY/Qrbnwl4HsqOG4juqypxm1HgQtpiFS1L6UhmfaSRv4+F5Oz7EB0rqX+KPZcV38FW9zQlLQPd2YBuC2HFqSPTWHIpX0ShrRaLKH2bXuITr2d+5udrSZfJz5tNHo5u1IHx3HUnKQwa5YGb5oHwuSy7LVKCSjTLKXvEMOXDWVyuOWRFNxveg5tDdtHdi0O3/AYyyAZJg+sF6U4RZmUT7IYTytW9mlmykGKm1fNjNVKt25MkiIv/N+7MOcSI/jcniJ1eC3p8Fup4RnKui9CEmyX/mLpQMBCMSHgLrYv33srq4uF1LFkup+WnmLsH+ef6j2AQ+hQ8wCxWu8YPQIHo5uGq8MNijQMjqKYG2Cqa2T7y7k7m+tVKe59PzRhOey0pOHAZUekZsF4+XzzW/2fv9xxmSsqZ8mpbzycmwuj7oMorKscr2wLVXj+gpMnhm07jNBO0Zr/0dzFJjGZEjpZyUZG6yr3HmC5ZitUr97baoZap7iSD1ceV8jaVzlGJfrQ52Wnwsnf6R1Z4IM0HDDQDlfTx8vUKsk+u7JOtLyymEYBIzRqgcYr+gFfw="
         file:
           - package/out/**/*
         skip_cleanup: true
