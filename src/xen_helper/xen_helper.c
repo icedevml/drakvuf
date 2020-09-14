@@ -112,6 +112,8 @@
 #define XEN_ALTP2M_external 2
 #endif
 
+#define UNUSED(x) (void)(x)
+
 bool xen_init_interface(xen_interface_t** xen)
 {
 
@@ -422,16 +424,19 @@ int xen_disable_ipt(xen_interface_t* xen, domid_t domID, int vcpu, ipt_state_t* 
 #else
 int xen_enable_ipt(xen_interface_t* xen, domid_t domID, int vcpu, ipt_state_t* ipt_state)
 {
+    UNUSED(xen, domID, vcpu, ipt_state);
     return 0;
 }
 
 int xen_get_ipt_offset(xen_interface_t* xen, domid_t domID, int vcpu, ipt_state_t* ipt_state)
 {
+    UNUSED(xen, domID, vcpu, ipt_state);
     return 0;
 }
 
 int xen_disable_ipt(xen_interface_t* xen, domid_t domID, int vcpu, ipt_state_t* ipt_state)
 {
+    UNUSED(xen, domID, vcpu, ipt_state);
     return 0;
 }
 #endif
