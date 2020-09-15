@@ -68,6 +68,16 @@ jobs:
         sonarcloud:
             organization: "drakvuf"
             token: "$SONAR_TOKEN"
+        apt:
+            update: true
+            packages:
+            - clang-10
+            - clang-tools-10
+            - bison
+            - flex
+            - libjson-c-dev
+            - autoconf-archive
+            - libxen-dev
       script:
         - 'if [ "$TRAVIS_PULL_REQUEST" != "false" ]; then exit 0; fi'
         - git submodule update --init libvmi
