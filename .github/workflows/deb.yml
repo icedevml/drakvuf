@@ -16,4 +16,4 @@ jobs:
       - uses: actions/checkout@v2
       - name: deb
         run: |
-          sh -c 'cd drakvuf && sh package/build.sh ${{ matrix.container }}'
+          sh package/build.sh ${{ matrix.container }}
