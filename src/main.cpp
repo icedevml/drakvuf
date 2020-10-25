@@ -112,10 +112,12 @@
 #include <unistd.h>
 #include <glib.h>
 #include <exception>
+#include <memory>
 
 #include "drakvuf.h"
+#include "exitcodes.h"
 
-static drakvuf_c* drakvuf;
+static std::unique_ptr<drakvuf_c> drakvuf;
 
 void close_handler(int signal)
 {
@@ -171,6 +173,7 @@ static void print_usage()
             "\t -x <plugin>               Don't activate the specified plugin\n"
             "\t -a <plugin>               Activate the specified plugin\n"
             "\t -p                        Leave domain paused after DRAKVUF exits\n"
+            "\t -F                        Enable fast singlestepping (requires Xen 4.14+)\n"
 #ifdef ENABLE_DOPPELGANGING
             "\t -B <path>                 The host path of the windows binary to inject (requires -m doppelganging)\n"
             "\t -P <target>               The guest path of the clean guest process to use as a cover (requires -m doppelganging)\n"
@@ -191,7 +194,9 @@ static void print_usage()
             "\t -v, --verbose             Turn on verbose (debug) output\n"
 #endif
 #ifdef ENABLE_PLUGIN_SYSCALLS
-            "\t -S <syscalls filter>      File with list of syscalls for trap in syscalls plugin (trap all if parameter is absent)\n"
+            "\t -S, --syscall-hooks-list <syscalls filter>\n"
+            "\t                           File with list of syscalls for trap in syscalls plugin (trap all if parameter is absent)\n"
+            "\t --disable-sysret          Do not monitor syscall results\n"
 #endif
 #ifdef ENABLE_PLUGIN_BSODMON
             "\t -b                        Exit from execution as soon as a BSoD is detected\n"
@@ -227,12 +232,16 @@ static void print_usage()
 #ifdef ENABLE_PLUGIN_MEMDUMP
             "\t --memdump-dir <directory>\n"
             "\t                           Where to store memory dumps\n"
-            "\t --dll-hooks-list <file>\n"
-            "\t                           List of DLL functions to be hooked (see wiki)\n"
             "\t --json-clr <path to json>\n"
             "\t                           The JSON profile for clr.dll\n"
             "\t --json-mscorwks <path to json>\n"
             "\t                           The JSON profile for mscorewks.dll\n"
+#endif
+#if defined(ENABLE_PLUGIN_MEMDUMP) || defined(ENABLE_PLUGIN_APIMON)
+            "\t --dll-hooks-list <file>\n"
+            "\t                           List of DLL functions to be hooked (see wiki)\n"
+            "\t --userhook-no-addr\n"
+            "\t                           Stop printing addresses of string arguments in apimon and memdump\n"
 #endif
 #ifdef ENABLE_PLUGIN_PROCDUMP
             "\t --procdump-dir <directory>\n"
@@ -241,13 +250,12 @@ static void print_usage()
             "\t                           Controls compression of processes dumps on disk\n"
 #endif
             "\t -h, --help                Show this help\n"
-            );
+           );
 }
 
 int main(int argc, char** argv)
 {
     int c;
-    int rc = 1;
     int timeout = 0;
     char const* inject_file = nullptr;
     char const* inject_cwd = nullptr;
@@ -267,6 +275,7 @@ int main(int argc, char** argv)
     bool verbose = false;
     bool leave_paused = false;
     bool libvmi_conf = false;
+    bool fast_singlestep = false;
     addr_t kpgd = 0;
     plugins_options options = {};
     bool disabled_all = false; // Used to disable all plugin once
@@ -282,7 +291,7 @@ int main(int argc, char** argv)
     {
         eprint_current_time();
         fprintf(stderr, "No plugins have been enabled, nothing to do!\n");
-        return rc;
+        return drakvuf_exit_code_t::FAIL;
     }
 
     int long_index = 0;
@@ -303,7 +312,9 @@ int main(int argc, char** argv)
         opt_procdump_dir,
         opt_compress_procdumps,
         opt_json_clr,
-        opt_json_mscorwks
+        opt_json_mscorwks,
+        opt_disable_sysret,
+        opt_userhook_no_addr,
     };
     const option long_opts[] =
     {
@@ -330,9 +341,13 @@ int main(int argc, char** argv)
         {"compress-procdumps", no_argument, NULL, opt_compress_procdumps},
         {"json-clr", required_argument, NULL, opt_json_clr},
         {"json-mscorwks", required_argument, NULL, opt_json_mscorwks},
+        {"syscall-hooks-list", required_argument, NULL, 'S'},
+        {"disable-sysret", no_argument, NULL, opt_disable_sysret},
+        {"userhook-no-addr", no_argument, NULL, opt_userhook_no_addr},
+        {"fast-singlestep", no_argument, NULL, 'F'},
         {NULL, 0, NULL, 0}
     };
-    const char* opts = "r:d:i:I:e:m:t:D:o:vx:a:f:spT:S:Mc:nblgj:k:w:W:h";
+    const char* opts = "r:d:i:I:e:m:t:D:o:vx:a:f:spT:S:Mc:nblgj:k:w:W:hF";
 
     while ((c = getopt_long (argc, argv, opts, long_opts, &long_index)) != -1)
         switch (c)
@@ -374,7 +389,7 @@ int main(int argc, char** argv)
 #else
                 {
                     fprintf(stderr, "Doppelganging is not available, you need to re-run ./configure!\n");
-                    return rc;
+                    return drakvuf_exit_code_t::FAIL;
                 }
 #endif
                 if (!strncmp(optarg, "execproc", 8))
@@ -431,9 +446,14 @@ int main(int argc, char** argv)
                 verbose = true;
                 break;
 #endif
+#ifdef ENABLE_PLUGIN_SYSCALLS
             case 'S':
                 options.syscalls_filter_file = optarg;
                 break;
+            case opt_disable_sysret:
+                options.disable_sysret = true;
+                break;
+#endif
             case 'M':
                 options.dump_modified_files = true;
                 break;
@@ -445,6 +465,9 @@ int main(int argc, char** argv)
                 break;
             case 'l':
                 libvmi_conf = true;
+                break;
+            case 'F':
+                fast_singlestep = true;
                 break;
             case 'k':
                 kpgd = strtoull(optarg, NULL, 0);
@@ -472,6 +495,9 @@ int main(int argc, char** argv)
                 break;
             case opt_json_mpr:
                 options.mpr_profile = optarg;
+                break;
+            case opt_userhook_no_addr:
+                options.userhook_no_addr = true;
                 break;
 #ifdef ENABLE_PLUGIN_WMIMON
             case opt_json_ole32:
@@ -508,43 +534,43 @@ int main(int argc, char** argv)
 #endif
             case 'h':
                 print_usage();
-                return 0;
+                return drakvuf_exit_code_t::SUCCESS;
             default:
                 if (isalnum(c))
                     fprintf(stderr, "Unrecognized option: %c\n", c);
                 else
                     fprintf(stderr, "Unrecognized option: %s\n", long_opts[long_index].name);
-                return rc;
+                return drakvuf_exit_code_t::FAIL;
         }
 
     if (!domain)
     {
         fprintf(stderr, "No domain name specified (-d)!\n");
-        return rc;
+        return drakvuf_exit_code_t::FAIL;
     }
 
     if (!json_kernel_path)
     {
         fprintf(stderr, "No kernel JSON profile specified (-r)!\n");
-        return rc;
+        return drakvuf_exit_code_t::FAIL;
     }
 
     if (INJECT_METHOD_DOPP == injection_method && (!binary_path || !target_process))
     {
         fprintf(stderr, "Missing parameters for process doppelganging injection (-B and -P)!\n");
-        return rc;
+        return drakvuf_exit_code_t::FAIL;
     }
 
     PRINT_DEBUG("Starting DRAKVUF initialization\n");
 
     try
     {
-        drakvuf = new drakvuf_c(domain, json_kernel_path, json_wow_path, output, verbose, leave_paused, libvmi_conf, kpgd);
+        drakvuf = std::make_unique<drakvuf_c>(domain, json_kernel_path, json_wow_path, output, verbose, leave_paused, libvmi_conf, kpgd, fast_singlestep);
     }
     catch (const std::exception& e)
     {
         fprintf(stderr, "Failed to initialize DRAKVUF: %s\n", e.what());
-        return rc;
+        return drakvuf_exit_code_t::FAIL;
     }
 
     PRINT_DEBUG("DRAKVUF initializated\n");
@@ -564,30 +590,28 @@ int main(int argc, char** argv)
         injector_status_t ret = drakvuf->inject_cmd(injection_pid, injection_thread, inject_file, inject_cwd, injection_method, output, binary_path, target_process, injection_timeout, injection_global_search, args_count, args);
         switch (ret)
         {
-        case INJECTOR_FAILED_WITH_ERROR_CODE:
-            rc = 0;
-        case INJECTOR_FAILED:
-            goto exit;
-        case INJECTOR_SUCCEEDED:
-        default:
-            break;
+            case INJECTOR_FAILED_WITH_ERROR_CODE:
+                return drakvuf_exit_code_t::SUCCESS;
+            case INJECTOR_FAILED:
+                return drakvuf_exit_code_t::FAIL;
+            case INJECTOR_SUCCEEDED:
+                break;
+            case INJECTOR_TIMEOUTED:
+                return drakvuf_exit_code_t::INJECTION_TIMEOUT;
         }
     }
 
     PRINT_DEBUG("Starting plugins\n");
 
     if (drakvuf->start_plugins(plugin_list, &options) < 0)
-        goto exit;
+        return drakvuf_exit_code_t::FAIL;
 
     PRINT_DEBUG("Beginning DRAKVUF loop\n");
 
     /* Start the event listener */
     drakvuf->loop(timeout);
-    rc = 0;
 
     PRINT_DEBUG("Finished DRAKVUF loop\n");
 
-exit:
-    delete drakvuf;
-    return rc;
+    return drakvuf_exit_code_t::SUCCESS;
 }

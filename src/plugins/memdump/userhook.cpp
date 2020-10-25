@@ -159,7 +159,7 @@ static void on_dll_discovered(drakvuf_t drakvuf, const dll_view_t* dll, void* ex
         {
             if (strstr((const char*)dll_name->contents, wanted_hook.dll_name.c_str()) != 0)
             {
-                drakvuf_request_usermode_hook(drakvuf, dll, wanted_hook.type, wanted_hook.function_name.c_str(), wanted_hook.offset, usermode_hook_cb, std::vector < std::unique_ptr< ArgumentPrinter > >(), plugin);
+                drakvuf_request_usermode_hook(drakvuf, dll, &wanted_hook, usermode_hook_cb, plugin);
             }
         }
     }
@@ -170,7 +170,7 @@ static void on_dll_discovered(drakvuf_t drakvuf, const dll_view_t* dll, void* ex
     drakvuf_release_vmi(drakvuf);
 }
 
-static void on_dll_hooked(drakvuf_t drakvuf, const dll_view_t* dll, void* extra)
+static void on_dll_hooked(drakvuf_t drakvuf, const dll_view_t* dll, const std::vector<hook_target_view_t>& targets, void* extra)
 {
     PRINT_DEBUG("[MEMDUMP] DLL hooked - done\n");
 }
@@ -179,7 +179,7 @@ void memdump::userhook_init(drakvuf_t drakvuf, const memdump_config* c, output_f
 {
     try
     {
-        drakvuf_load_dll_hook_config(drakvuf, c->dll_hooks_list, &this->wanted_hooks);
+        drakvuf_load_dll_hook_config(drakvuf, c->dll_hooks_list, c->print_no_addr, &this->wanted_hooks);
     }
     catch (int e)
     {
@@ -187,15 +187,14 @@ void memdump::userhook_init(drakvuf_t drakvuf, const memdump_config* c, output_f
         throw -1;
     }
 
-    auto it = std::begin(this->wanted_hooks);
-
-    while (it != std::end(this->wanted_hooks))
+    auto& hooks = this->wanted_hooks;
+    auto noStack = [](const auto& entry)
     {
-        if ((*it).log_strategy != "stack" && (*it).log_strategy != "log+stack")
-            it = this->wanted_hooks.erase(it);
-        else
-            ++it;
-    }
+        return !entry.actions.stack;
+    };
+    hooks.erase(
+        std::remove_if(std::begin(hooks), std::end(hooks), noStack),
+        std::end(hooks));
 
     if (this->wanted_hooks.empty())
     {
@@ -203,18 +202,22 @@ void memdump::userhook_init(drakvuf_t drakvuf, const memdump_config* c, output_f
         return;
     }
 
-    usermode_cb_registration reg = {
+    usermode_cb_registration reg =
+    {
         .pre_cb = on_dll_discovered,
         .post_cb = on_dll_hooked,
-        .extra = (void *)this
+        .extra = (void*)this
     };
 
     usermode_reg_status_t status = drakvuf_register_usermode_callback(drakvuf, &reg);
 
     if (status == USERMODE_ARCH_UNSUPPORTED ||
-        status == USERMODE_OS_UNSUPPORTED) {
+        status == USERMODE_OS_UNSUPPORTED)
+    {
         PRINT_DEBUG("[MEMDUMP] Usermode hooking is not supported on this architecture/bitness/os version, these features will be disabled\n");
-    } else if (status != USERMODE_REGISTER_SUCCESS) {
+    }
+    else if (status != USERMODE_REGISTER_SUCCESS)
+    {
         PRINT_DEBUG("[MEMDUMP] Failed to subscribe to libusermode\n");
         throw -1;
     }
@@ -244,7 +247,7 @@ void memdump::setup_dotnet_hooks(drakvuf_t drakvuf, const char* dll_name, const 
     entry.dll_name = dll_name;
     entry.type = HOOK_BY_OFFSET;
     entry.offset = func_rva;
-    entry.log_strategy = "log+stack";
+    entry.actions = HookActions::empty().set_log().set_stack();
     this->wanted_hooks.push_back(std::move(entry));
 }
 

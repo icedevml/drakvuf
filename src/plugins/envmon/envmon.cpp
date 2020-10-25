@@ -190,8 +190,6 @@ static const std::map<uint64_t, std::string> define_dos_device_flags
 static event_response_t trap_SspipGetUserName_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     auto p = get_trap_plugin<envmon>(info);
-    if (!p)
-        return VMI_EVENT_RESPONSE_NONE;
 
     addr_t ex_name_fmt = drakvuf_get_function_argument(drakvuf, info, 1);
 
@@ -200,44 +198,16 @@ static event_response_t trap_SspipGetUserName_cb(drakvuf_t drakvuf, drakvuf_trap
         ex_name_fmt_str = extended_name_formats[ex_name_fmt];
 
 
-    switch (p->m_output_format)
-    {
-        case OUTPUT_CSV:
-            csvfmt::print("envmon", drakvuf, info,
-                          keyval("ExtendedNameFormat", ex_name_fmt),
-                          keyval("ExtendedNameFormatStr", std::quoted(ex_name_fmt_str))
-                         );
-            break;
-        case OUTPUT_KV:
-            kvfmt::print("envmon", drakvuf, info,
-                         keyval("ExtendedNameFormat", ex_name_fmt),
-                         keyval("ExtendedNameFormatStr", std::quoted(ex_name_fmt_str))
-                        );
-            break;
-        case OUTPUT_JSON:
-        {
-            jsonfmt::print("envmon", drakvuf, info,
-                           keyval("ExtendedNameFormat", ex_name_fmt),
-                           keyval("ExtendedNameFormatStr", ex_name_fmt_str)
-                          );
-            break;
-        }
-        default:
-        case OUTPUT_DEFAULT:
-            fmt::print("envmon", drakvuf, info,
-                       keyval("ExtendedNameFormat", ex_name_fmt),
-                       keyval("ExtendedNameFormatStr", std::quoted(ex_name_fmt_str))
-                      );
-            break;
-    }
+    fmt::print(p->m_output_format, "envmon", drakvuf, info,
+               keyval("ExtendedNameFormat", fmt::Nval(ex_name_fmt)),
+               keyval("ExtendedNameFormatStr", fmt::Qstr(ex_name_fmt_str))
+              );
     return VMI_EVENT_RESPONSE_NONE;
 }
 
 static event_response_t trap_DefineDosDeviceW_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     auto p = get_trap_plugin<envmon>(info);
-    if (!p)
-        return VMI_EVENT_RESPONSE_NONE;
 
     const auto flags = print::FieldToString(define_dos_device_flags, std::bitset<64>(drakvuf_get_function_argument(drakvuf, info, 1)));
     addr_t device_name_va = drakvuf_get_function_argument(drakvuf, info, 2);
@@ -265,39 +235,11 @@ static event_response_t trap_DefineDosDeviceW_cb(drakvuf_t drakvuf, drakvuf_trap
 
     wmi_lock.unlock();
 
-    switch (p->m_output_format)
-    {
-        case OUTPUT_CSV:
-            csvfmt::print("envmon", drakvuf, info,
-                          keyval("Flags", flags),
-                          keyval("DeviceName", std::quoted(device_name)),
-                          keyval("TargetPath", std::quoted(target_path))
-                         );
-            break;
-        case OUTPUT_KV:
-            kvfmt::print("envmon", drakvuf, info,
-                         keyval("Flags", flags.c_str()),
-                         keyval("DeviceName", std::quoted(device_name)),
-                         keyval("TargetPath", std::quoted(target_path))
-                        );
-            break;
-        case OUTPUT_JSON:
-        {
-            jsonfmt::print("envmon", drakvuf, info,
-                           keyval("Flags", flags.c_str()),
-                           keyval("DeviceName", device_name),
-                           keyval("TargetPath", target_path)
-                          );
-            break;
-        }
-        default:
-            fmt::print("envmon", drakvuf, info,
-                       keyval("Flags", flags.c_str()),
-                       keyval("DeviceName", std::quoted(device_name)),
-                       keyval("TargetPath", std::quoted(target_path))
-                      );
-            break;
-    }
+    fmt::print(p->m_output_format, "envmon", drakvuf, info,
+               keyval("Flags", fmt::Qstr(flags)),
+               keyval("DeviceName", fmt::Qstr(device_name)),
+               keyval("TargetPath", fmt::Qstr(target_path))
+              );
 
     vmi_free_unicode_str(device_name_us);
     vmi_free_unicode_str(target_path_us);
@@ -308,62 +250,22 @@ static event_response_t trap_DefineDosDeviceW_cb(drakvuf_t drakvuf, drakvuf_trap
 static event_response_t trap_GetComputerNameW_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     auto p = get_trap_plugin<envmon>(info);
-    if (!p)
-        return VMI_EVENT_RESPONSE_NONE;
 
-    switch (p->m_output_format)
-    {
-        case OUTPUT_CSV:
-            csvfmt::print("envmon", drakvuf, info);
-            break;
-        case OUTPUT_KV:
-            kvfmt::print("envmon", drakvuf, info);
-            break;
-        case OUTPUT_JSON:
-        {
-            jsonfmt::print("envmon", drakvuf, info);
-            break;
-        }
-        default:
-        case OUTPUT_DEFAULT:
-            fmt::print("envmon", drakvuf, info);
-            break;
-    }
+    fmt::print(p->m_output_format, "envmon", drakvuf, info);
     return VMI_EVENT_RESPONSE_NONE;
 }
 
 static event_response_t trap_IsNativeVhdBoot_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     auto p = get_trap_plugin<envmon>(info);
-    if (!p)
-        return VMI_EVENT_RESPONSE_NONE;
 
-    switch (p->m_output_format)
-    {
-        case OUTPUT_CSV:
-            csvfmt::print("envmon", drakvuf, info);
-            break;
-        case OUTPUT_KV:
-            kvfmt::print("envmon", drakvuf, info);
-            break;
-        case OUTPUT_JSON:
-        {
-            jsonfmt::print("envmon", drakvuf, info);
-            break;
-        }
-        default:
-        case OUTPUT_DEFAULT:
-            fmt::print("envmon", drakvuf, info);
-            break;
-    }
+    fmt::print(p->m_output_format, "envmon", drakvuf, info);
     return VMI_EVENT_RESPONSE_NONE;
 }
 
 static event_response_t trap_GetComputerNameExW_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     auto p = get_trap_plugin<envmon>(info);
-    if (!p)
-        return VMI_EVENT_RESPONSE_NONE;
 
     // COMPUTER_NAME_FORMAT NameType
     addr_t name_type = drakvuf_get_function_argument(drakvuf, info, 1);
@@ -372,44 +274,16 @@ static event_response_t trap_GetComputerNameExW_cb(drakvuf_t drakvuf, drakvuf_tr
     if (name_type < ComputerNameMax)
         name_type_str = computer_name_formats[name_type];
 
-    switch (p->m_output_format)
-    {
-        case OUTPUT_CSV:
-            csvfmt::print("envmon", drakvuf, info,
-                          keyval("NameType", name_type),
-                          keyval("NameTypeStr", std::quoted(name_type_str))
-                         );
-            break;
-        case OUTPUT_KV:
-            kvfmt::print("envmon", drakvuf, info,
-                         keyval("NameType", name_type),
-                         keyval("NameTypeStr", std::quoted(name_type_str))
-                        );
-            break;
-        case OUTPUT_JSON:
-        {
-            jsonfmt::print("envmon", drakvuf, info,
-                           keyval("NameType", name_type),
-                           keyval("NameTypeStr", name_type_str)
-                          );
-            break;
-        }
-        default:
-        case OUTPUT_DEFAULT:
-            fmt::print("envmon", drakvuf, info,
-                       keyval("NameType", name_type),
-                       keyval("NameTypeStr", std::quoted(name_type_str))
-                      );
-            break;
-    }
+    fmt::print(p->m_output_format, "envmon", drakvuf, info,
+               keyval("NameType", fmt::Nval(name_type)),
+               keyval("NameTypeStr", fmt::Qstr(name_type_str))
+              );
     return VMI_EVENT_RESPONSE_NONE;
 }
 
 static event_response_t trap_GetAdaptersAddresses_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     auto p = get_trap_plugin<envmon>(info);
-    if (!p)
-        return VMI_EVENT_RESPONSE_NONE;
 
     const auto family = print::FieldToString(family_name_formats, drakvuf_get_function_argument(drakvuf, info, 1));
     const auto flags  = print::FieldToString(flags_name_formats, std::bitset<64>(drakvuf_get_function_argument(drakvuf, info, 2)));
@@ -417,31 +291,18 @@ static event_response_t trap_GetAdaptersAddresses_cb(drakvuf_t drakvuf, drakvuf_
     switch (p->m_output_format)
     {
         case OUTPUT_CSV:
-            csvfmt::print("envmon", drakvuf, info,
-                          keyval("Family", family.c_str()),
-                          keyval("Flags", flags.c_str())
-                         );
+        case OUTPUT_JSON:
+        case OUTPUT_DEFAULT:
+            fmt::print(p->m_output_format, "envmon", drakvuf, info,
+                       keyval("Family", fmt::Qstr(family)),
+                       keyval("Flags", fmt::Qstr(flags))
+                      );
             break;
         case OUTPUT_KV:
             kvfmt::print("envmon", drakvuf, info,
-                         keyval("Family", family.c_str()),
-                         keyval("Flags", flags.c_str())
+                         keyval("Family", fmt::Rstr(family)),
+                         fmt::Rstr(flags)
                         );
-            break;
-        case OUTPUT_JSON:
-        {
-            jsonfmt::print("envmon", drakvuf, info,
-                           keyval("Family", family.c_str()),
-                           keyval("Flags", flags.c_str())
-                          );
-            break;
-        }
-        default:
-        case OUTPUT_DEFAULT:
-            fmt::print("envmon", drakvuf, info,
-                       keyval("Family", family.c_str()),
-                       keyval("Flags", flags.c_str())
-                      );
             break;
     }
     return VMI_EVENT_RESPONSE_NONE;
@@ -450,36 +311,11 @@ static event_response_t trap_GetAdaptersAddresses_cb(drakvuf_t drakvuf, drakvuf_
 static event_response_t trap_WNetGetProviderNameW_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     auto p = get_trap_plugin<envmon>(info);
-    if (!p)
-        return VMI_EVENT_RESPONSE_NONE;
 
     const auto net_type = drakvuf_get_function_argument(drakvuf, info, 1);
-    switch (p->m_output_format)
-    {
-        case OUTPUT_CSV:
-            csvfmt::print("envmon", drakvuf, info,
-                          keyval("NetType", net_type)
-                         );
-            break;
-        case OUTPUT_KV:
-            kvfmt::print("envmon", drakvuf, info,
-                         keyval("NetType", net_type)
-                        );
-            break;
-        case OUTPUT_JSON:
-        {
-            jsonfmt::print("envmon", drakvuf, info,
-                           keyval("NetType", net_type)
-                          );
-            break;
-        }
-        default:
-        case OUTPUT_DEFAULT:
-            fmt::print("envmon", drakvuf, info,
-                       keyval("NetType", net_type)
-                      );
-            break;
-    }
+    fmt::print(p->m_output_format, "envmon", drakvuf, info,
+               keyval("NetType", fmt::Nval(net_type))
+              );
     return VMI_EVENT_RESPONSE_NONE;
 }
 
@@ -560,7 +396,7 @@ envmon::envmon(drakvuf_t drakvuf, const envmon_config* c, output_format_t output
     PRINT_DEBUG("envmon attempt to setup a trap for \"sspicli.dll\"\n");
     {
         breakpoint_in_dll_module_searcher bp(sspicli_profile, "sspicli.dll");
-        if (!register_trap(drakvuf, nullptr, this, trap_SspipGetUserName_cb, bp.for_syscall_name("SspipGetUserName")))
+        if (!register_trap(nullptr, trap_SspipGetUserName_cb, bp.for_syscall_name("SspipGetUserName")))
             throw -1;
     }
     json_object_put(sspicli_profile);
@@ -575,14 +411,13 @@ envmon::envmon(drakvuf_t drakvuf, const envmon_config* c, output_format_t output
     PRINT_DEBUG("envmon attempt to setup a trap for \"kernelbase.dll\"\n");
     {
         breakpoint_in_dll_module_searcher bp(kernelbase_profile, "kernelbase.dll");
-        if (!register_trap(drakvuf, nullptr, this, trap_GetComputerNameExW_cb, bp.for_syscall_name("GetComputerNameExW")))
+        if (!register_trap(nullptr, trap_GetComputerNameExW_cb, bp.for_syscall_name("GetComputerNameExW")))
             throw -1;
-
     }
 
     {
         breakpoint_in_dll_module_searcher bp(kernelbase_profile, "kernelbase.dll");
-        if (!register_trap(drakvuf, nullptr, this, trap_DefineDosDeviceW_cb, bp.for_syscall_name("DefineDosDeviceW")))
+        if (!register_trap(nullptr, trap_DefineDosDeviceW_cb, bp.for_syscall_name("DefineDosDeviceW")))
             throw -1;
     }
     json_object_put(kernelbase_profile);
@@ -597,7 +432,7 @@ envmon::envmon(drakvuf_t drakvuf, const envmon_config* c, output_format_t output
     PRINT_DEBUG("envmon attempt to setup a trap for \"kernel32.dll\"\n");
     {
         breakpoint_in_dll_module_searcher bp(kernel32_profile, "kernel32.dll");
-        if (!register_trap(drakvuf, nullptr, this, trap_GetComputerNameW_cb, bp.for_syscall_name("GetComputerNameW")))
+        if (!register_trap(nullptr, trap_GetComputerNameW_cb, bp.for_syscall_name("GetComputerNameW")))
             throw -1;
     }
 
@@ -605,7 +440,7 @@ envmon::envmon(drakvuf_t drakvuf, const envmon_config* c, output_format_t output
     {
         PRINT_DEBUG("envmon attempt to setup a trap for \"kernel32.dll\"\n");
         breakpoint_in_dll_module_searcher bp(kernel32_profile, "kernel32.dll");
-        if (!register_trap(drakvuf, nullptr, this, trap_IsNativeVhdBoot_cb, bp.for_syscall_name("IsNativeVhdBoot")))
+        if (!register_trap(nullptr, trap_IsNativeVhdBoot_cb, bp.for_syscall_name("IsNativeVhdBoot")))
             throw -1;
     }
     json_object_put(kernel32_profile);
@@ -623,7 +458,7 @@ envmon::envmon(drakvuf_t drakvuf, const envmon_config* c, output_format_t output
         {
             PRINT_DEBUG("envmon attempt to setup a trap for \"kernel32.dll\"\n");
             breakpoint_in_dll_module_searcher bp(wow_kernel32_profile, "kernel32.dll", true);
-            if (!register_trap(drakvuf, nullptr, this, trap_IsNativeVhdBoot_cb, bp.for_syscall_name("IsNativeVhdBoot")))
+            if (!register_trap(nullptr, trap_IsNativeVhdBoot_cb, bp.for_syscall_name("IsNativeVhdBoot")))
                 throw -1;
         }
         json_object_put(wow_kernel32_profile);
@@ -639,7 +474,7 @@ envmon::envmon(drakvuf_t drakvuf, const envmon_config* c, output_format_t output
     PRINT_DEBUG("envmon attempt to setup a trap for \"iphlpapi.dll\"\n");
     {
         breakpoint_in_dll_module_searcher bp(iphlpapi_profile, "iphlpapi.dll");
-        if (!register_trap(drakvuf, nullptr, this, trap_GetAdaptersAddresses_cb, bp.for_syscall_name("GetAdaptersAddresses")))
+        if (!register_trap(nullptr, trap_GetAdaptersAddresses_cb, bp.for_syscall_name("GetAdaptersAddresses")))
             throw -1;
 
     }
@@ -655,7 +490,7 @@ envmon::envmon(drakvuf_t drakvuf, const envmon_config* c, output_format_t output
     PRINT_DEBUG("envmon attempt to setup a trap for \"mpr.dll\"\n");
     {
         breakpoint_in_dll_module_searcher bp(mpr_profile, "mpr.dll");
-        if (!register_trap(drakvuf, nullptr, this, trap_WNetGetProviderNameW_cb, bp.for_syscall_name("WNetGetProviderNameW")))
+        if (!register_trap(nullptr, trap_WNetGetProviderNameW_cb, bp.for_syscall_name("WNetGetProviderNameW")))
             throw -1;
     }
 

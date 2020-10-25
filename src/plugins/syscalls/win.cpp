@@ -107,6 +107,8 @@
 #include <inttypes.h>
 #include <libvmi/libvmi.h>
 #include <assert.h>
+#include <string>
+#include <vector>
 
 #include <libdrakvuf/ntstatus.h>
 
@@ -116,26 +118,26 @@
 
 static event_response_t ret_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
-    struct wrapper *wr = (struct wrapper*)info->trap->data;
+    struct wrapper* wr = (struct wrapper*)info->trap->data;
 
     /*
      * Multiple syscalls might hit the same return address so make sure we are
      * handling the correct thread's return here.
      */
-    if ( info->proc_data.tid != wr->tid )
+    if ( info->proc_data.tid != wr->tid || wr->stack_fingerprint != info->regs->rsp)
         return 0;
 
-    struct wrapper *w = (struct wrapper *)wr->w;
-    const syscall_t *sc = w->sc;
-    syscalls *s = w->s;
+    struct wrapper* w = (struct wrapper*)wr->w;
+    const syscall_t* sc = w->sc;
+    syscalls* s = w->s;
 
     char exit_status_buf[NTSTATUS_MAX_FORMAT_STR_SIZE] = {0};
     const char* exit_status_str = ntstatus_to_string(ntstatus_t(info->regs->rax));
     if (!exit_status_str)
         exit_status_str = ntstatus_format_string(ntstatus_t(info->regs->rax), exit_status_buf, sizeof(exit_status_buf));
 
-    print_header(s->format, drakvuf, false, info, w->num, info->trap->breakpoint.module, sc, info->regs->rax, exit_status_str);
-    print_footer(s->format, 0, false);
+    std::vector<uint64_t> args;
+    print_syscall(s, drakvuf, VMI_OS_WINDOWS, false, info, w->num, std::string(info->trap->breakpoint.module), sc, args, info->regs->rax, exit_status_str);
 
     drakvuf_remove_trap(drakvuf, info->trap, (drakvuf_trap_free_t)free_trap);
     s->traps = g_slist_remove(s->traps, info->trap);
@@ -145,28 +147,20 @@ static event_response_t ret_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 
 static event_response_t syscall_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
-    vmi_lock_guard lg(drakvuf);
-    struct wrapper *w = (struct wrapper*)info->trap->data;
-    const syscall_t *sc = w->sc;
-    syscalls *s = w->s;
+    auto vmi = vmi_lock_guard(drakvuf);
+    struct wrapper* w = (struct wrapper*)info->trap->data;
+    const syscall_t* sc = w->sc;
+    syscalls* s = w->s;
 
-    unsigned int nargs = 0;
-    size_t size = 0;
-    void *buf = NULL;
-
-    if ( sc )
-    {
-        nargs = sc->num_args;
-        size = s->reg_size * nargs;
-        buf = g_try_malloc0(sizeof(char)*size);
-    }
+    unsigned int nargs = sc ? sc->num_args : 0;
+    std::vector<uint64_t> args(nargs);
 
     access_context_t ctx;
     memset(&ctx, 0, sizeof(access_context_t));
     ctx.translate_mechanism = VMI_TM_PROCESS_DTB;
     ctx.dtb = info->regs->cr3;
 
-    if ( nargs && buf )
+    if (nargs)
     {
         // get arguments only if we know how many to get
 
@@ -178,50 +172,65 @@ static event_response_t syscall_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
             // multiply num args by 4 for 32 bit systems to get the number of bytes we need
             // to read from the stack.  assumes standard calling convention (cdecl) for the
             // visual studio compile.
-            if ( VMI_FAILURE == vmi_read(lg.vmi, &ctx, size, buf, NULL) )
+            std::vector<uint32_t> tmp_args(nargs);
+            if ( VMI_FAILURE == vmi_read(vmi, &ctx, s->reg_size * nargs, &tmp_args[0], NULL) )
                 nargs = 0;
+
+            for (size_t i = 0; i < nargs; ++i)
+                args[i] = tmp_args[i];
         }
         else
         {
             // 64 bit os
-            uint64_t *buf64 = (uint64_t*)buf;
             if ( nargs > 0 )
-                buf64[0] = info->regs->rcx;
+                args[0] = info->regs->rcx;
             if ( nargs > 1 )
-                buf64[1] = info->regs->rdx;
+                args[1] = info->regs->rdx;
             if ( nargs > 2 )
-                buf64[2] = info->regs->r8;
+                args[2] = info->regs->r8;
             if ( nargs > 3 )
-                buf64[3] = info->regs->r9;
+                args[3] = info->regs->r9;
             if ( nargs > 4 )
             {
                 // first 4 agrs passed via rcx, rdx, r8, and r9
                 ctx.addr = info->regs->rsp+0x28;  // jump over homing space + base pointer
                 size_t sp_size = s->reg_size * (nargs-4);
-                if ( VMI_FAILURE == vmi_read(lg.vmi, &ctx, sp_size, &(buf64[4]), NULL) )
+                if ( VMI_FAILURE == vmi_read(vmi, &ctx, sp_size, &args[4], NULL) )
                     nargs = 0;
             }
         }
     }
 
-    print_header(s->format, drakvuf, true, info, w->num, w->type, sc, 0, NULL);
-    if ( nargs )
-    {
-        print_nargs(s->format, nargs);
-        print_args(s, drakvuf, info, sc, buf);
-    }
-    print_footer(s->format, nargs, true);
-    g_free(buf);
+    vmi.unlock();
+    print_syscall(s, drakvuf, VMI_OS_WINDOWS, true, info, w->num, std::string(w->type), sc, args, 0, NULL);
+    vmi.lock();
 
-    addr_t ret = 0;
-    if ( VMI_FAILURE == vmi_read_addr_va(lg.vmi, info->regs->rsp, 0, &ret) )
+    if ( s->disable_sysret )
         return 0;
 
-    drakvuf_trap_t *ret_trap = g_slice_new0(drakvuf_trap_t);
-    struct wrapper *wr = g_slice_new0(struct wrapper);
+    addr_t ret = 0;
+    if ( VMI_FAILURE == vmi_read_addr_va(vmi, info->regs->rsp, 0, &ret) )
+        return 0;
+
+    drakvuf_trap_t* ret_trap = g_slice_new0(drakvuf_trap_t);
+    struct wrapper* wr = g_slice_new0(struct wrapper);
 
     wr->tid = info->proc_data.tid;
     wr->w = w;
+    if ( 4 == s->reg_size )
+    {
+        // For 32-bit Windows, the calling convention of the syscall api is _stdcall, which means the callee to clear the stack space.
+        // So when the function returns, the value of the stack pointer should be the current rsp add the size of the parameters and
+        // the size of the return address (4 bytes)
+        wr->stack_fingerprint = info->regs->rsp + 4 * nargs + 4;
+    }
+    else
+    {
+        // For 64-bit windows calling convention, the stack pointer remains unchanged before and after the function call.
+        // So when the function returns, the value of the stack pointer should be the current rsp add the size of the return address (8 bytes)
+        // See : https://docs.microsoft.com/en-us/cpp/build/x64-software-conventions?view=vs-2019
+        wr->stack_fingerprint = info->regs->rsp + 8;
+    }
 
     ret_trap->breakpoint.lookup_type = LOOKUP_DTB;
     ret_trap->breakpoint.addr_type = ADDR_VA;
@@ -243,18 +252,18 @@ static event_response_t syscall_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
     return 0;
 }
 
-static bool trap_syscall_table_entries(drakvuf_t drakvuf, vmi_instance_t vmi, syscalls *s,
-                                       addr_t cr3, bool ntos, addr_t base, addr_t *sst)
+static bool trap_syscall_table_entries(drakvuf_t drakvuf, vmi_instance_t vmi, syscalls* s,
+                                       addr_t cr3, bool ntos, addr_t base, addr_t* sst)
 {
     bool ret = false;
     unsigned int syscall_count = ntos ? NUM_SYSCALLS_NT : NUM_SYSCALLS_WIN32K;
-    const syscall_t **definitions = ntos ? nt : win32k;
+    const syscall_t** definitions = ntos ? nt : win32k;
     int error = -1;
 
-    json_object *json = ntos ? vmi_get_kernel_json(vmi) : s->win32k_json;
+    json_object* json = ntos ? vmi_get_kernel_json(vmi) : s->win32k_json;
     symbols_t* symbols = json ? json_get_symbols(json) : NULL;
 
-    int32_t *table = (int32_t*)g_try_malloc0(sst[1] * sizeof(int32_t));
+    int32_t* table = (int32_t*)g_try_malloc0(sst[1] * sizeof(int32_t));
     if ( !table )
         return ret;
 
@@ -268,7 +277,7 @@ static bool trap_syscall_table_entries(drakvuf_t drakvuf, vmi_instance_t vmi, sy
         return ret;
     }
 
-    for ( uint16_t syscall_num = 0; syscall_num < sst[1]; syscall_num++ )
+    for ( addr_t syscall_num = 0; syscall_num < sst[1]; syscall_num++ )
     {
         long offset = 0;
         addr_t syscall_va;
@@ -282,7 +291,8 @@ static bool trap_syscall_table_entries(drakvuf_t drakvuf, vmi_instance_t vmi, sy
              */
             offset = table[syscall_num] >> 4;
             syscall_va = sst[0] + offset;
-        } else
+        }
+        else
             syscall_va = table[syscall_num];
 
         addr_t rva = syscall_va - base;
@@ -313,7 +323,7 @@ static bool trap_syscall_table_entries(drakvuf_t drakvuf, vmi_instance_t vmi, sy
         }
 
         if ( !symbol )
-            PRINT_DEBUG("\t Syscall %u @ 0x%lx has no debug information matching it with RVA 0x%lx. Table: 0x%lx Offset: 0x%lx\n", syscall_num, syscall_va, rva, sst[0], offset);
+            PRINT_DEBUG("\t Syscall %lu @ 0x%lx has no debug information matching it with RVA 0x%lx. Table: 0x%lx Offset: 0x%lx\n", syscall_num, syscall_va, rva, sst[0], offset);
         else if ( !definition )
             PRINT_DEBUG("\t Syscall %s has no internal definition. New syscall?\n", symbol->name);
 
@@ -323,7 +333,7 @@ static bool trap_syscall_table_entries(drakvuf_t drakvuf, vmi_instance_t vmi, sy
             continue;
         }
 
-        struct wrapper *w = g_slice_new0(struct wrapper);
+        struct wrapper* w = g_slice_new0(struct wrapper);
         drakvuf_trap_t* trap = g_slice_new0(drakvuf_trap_t);
 
         w->num = syscall_num;
@@ -343,7 +353,7 @@ static bool trap_syscall_table_entries(drakvuf_t drakvuf, vmi_instance_t vmi, sy
             s->traps = g_slist_prepend(s->traps, trap);
         else
         {
-            PRINT_DEBUG("Failed to trap syscall %u @ 0x%lx\n", syscall_num, trap->breakpoint.addr);
+            PRINT_DEBUG("Failed to trap syscall %lu @ 0x%lx\n", syscall_num, trap->breakpoint.addr);
             g_slice_free(struct wrapper, trap->data);
             g_slice_free(drakvuf_trap_t, trap);
         }
@@ -361,7 +371,7 @@ static bool trap_syscall_table_entries(drakvuf_t drakvuf, vmi_instance_t vmi, sy
     return ret;
 }
 
-void setup_windows(drakvuf_t drakvuf, syscalls *s)
+void setup_windows(drakvuf_t drakvuf, syscalls* s)
 {
     auto vmi = vmi_lock_guard(drakvuf);
 
@@ -380,7 +390,9 @@ void setup_windows(drakvuf_t drakvuf, syscalls *s)
         s->sst[0][1] = sst[0].ServiceLimit;
         s->sst[1][0] = sst[1].ServiceTable;
         s->sst[1][1] = sst[1].ServiceLimit;
-    } else {
+    }
+    else
+    {
         if ( !drakvuf_get_kernel_symbol_rva(drakvuf, "KiFastCallEntry", &start) )
             throw -1;
 
@@ -393,6 +405,14 @@ void setup_windows(drakvuf_t drakvuf, syscalls *s)
         s->sst[1][0] = sst[1].ServiceTable;
         s->sst[1][1] = sst[1].ServiceLimit;
     }
+
+    s->offsets = (size_t*)g_try_malloc0(_WINDOWS_STRUCTS_OFFSETS_MAX * sizeof(size_t));
+    if ( !s->offsets )
+        throw -1;
+
+    for (int i = 0; i < _WINDOWS_STRUCTS_OFFSETS_MAX; ++i)
+        if ( !drakvuf_get_kernel_struct_member_rva(drakvuf, windows_structs_offsets_names[i][0], windows_structs_offsets_names[i][1], &s->offsets[i]) )
+            throw -1;
 
     start += s->kernel_base;
 
@@ -458,4 +478,55 @@ void setup_windows(drakvuf_t drakvuf, syscalls *s)
         PRINT_DEBUG("Failed to trap win32k syscall entries\n");
         throw -1;
     }
+}
+
+char* win_extract_string(syscalls* s, drakvuf_t drakvuf, drakvuf_trap_info_t* info, const arg_t& arg, addr_t val)
+{
+    vmi_lock_guard vmi(drakvuf);
+    if ( arg.type == POBJECT_ATTRIBUTES )
+    {
+        access_context_t ctx;
+        ctx.translate_mechanism = VMI_TM_PROCESS_DTB;
+        ctx.dtb = info->regs->cr3;
+
+        addr_t file_root_handle = 0;
+        ctx.addr = val + s->offsets[_OBJECT_ATTRIBUTES_RootDirectory];
+        if ( VMI_FAILURE == vmi_read_addr(vmi.vmi, &ctx, &file_root_handle) )
+            return nullptr;
+
+        char* file_root = drakvuf_get_filename_from_handle(drakvuf, info, file_root_handle);
+
+        ctx.addr = val + s->offsets[_OBJECT_ATTRIBUTES_ObjectName];
+        if ( VMI_FAILURE == vmi_read_addr(vmi.vmi, &ctx, &ctx.addr) )
+        {
+            g_free(file_root);
+            return nullptr;
+        }
+
+        unicode_string_t* file_name_us = drakvuf_read_unicode(drakvuf, info, ctx.addr);
+
+        if ( !file_name_us )
+        {
+            g_free(file_root);
+            return nullptr;
+        }
+
+        char* file_path = g_strdup_printf("%s%s%s",
+                                          file_root ?: "",
+                                          file_root ? "\\" : "",
+                                          file_name_us->contents);
+
+        vmi_free_unicode_str(file_name_us);
+        g_free(file_root);
+
+        return file_path;
+    }
+
+    if ( !strcmp(arg.name, "FileHandle") )
+    {
+        char* filename = drakvuf_get_filename_from_handle(drakvuf, info, val);
+        if ( filename ) return filename;
+    }
+
+    return nullptr;
 }

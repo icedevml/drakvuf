@@ -107,6 +107,7 @@
 #include <libdrakvuf/libdrakvuf.h>
 #include <libvmi/libvmi.h>
 #include "librarymon.h"
+#include "plugins/output_format.h"
 
 
 static event_response_t load_library_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
@@ -116,8 +117,6 @@ static event_response_t load_library_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* 
         return VMI_EVENT_RESPONSE_NONE;
 
     auto mon = get_trap_plugin<librarymon>(info);
-    if (!mon)
-        return VMI_EVENT_RESPONSE_NONE;
 
     unicode_string_t path { 0, 0, 0 };
     unicode_string_t name { 0, 0, 0 };
@@ -158,11 +157,11 @@ librarymon::librarymon(drakvuf_t drakvuf, const librarymon_config* c, output_for
     PRINT_DEBUG("Librarymon attempt to setup a trap for \"LdrLoadDll\"\n");
 
     breakpoint_in_dll_module_searcher bp(ntdll_profile, "ntdll.dll");
-    if (!register_trap(drakvuf, nullptr, this, load_library_cb, bp.for_syscall_name("LdrLoadDll")))
+    if (!register_trap(nullptr, load_library_cb, bp.for_syscall_name("LdrLoadDll")))
         throw -1;
 
     PRINT_DEBUG("Librarymon attempt to setup a trap for \"LdrGetDllHandle\"\n");
-    if (!register_trap(drakvuf, nullptr, this, load_library_cb, bp.for_syscall_name("LdrGetDllHandle")))
+    if (!register_trap(nullptr, load_library_cb, bp.for_syscall_name("LdrGetDllHandle")))
         throw -1;
 
 
@@ -171,54 +170,20 @@ librarymon::librarymon(drakvuf_t drakvuf, const librarymon_config* c, output_for
 
 void librarymon::print_call_info(drakvuf_t drakvuf, drakvuf_trap_info_t* info, const unicode_string_t& name, const unicode_string_t& path)
 {
-    switch (m_output_format)
+    const char* cname = reinterpret_cast<const char*>(name.contents) ?: "";
+    const char* cpath = reinterpret_cast<const char*>(path.contents) ?: "";
+
+    if (m_output_format == OUTPUT_DEFAULT)
     {
-        case OUTPUT_CSV:
-            printf("librarymon," FORMAT_TIMEVAL ",%" PRIu32 ",0x%" PRIx64 ",\"%s\",%" PRIi64 ",%s,\"%s\",\"%s\"\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3, info->attached_proc_data.name,
-                   info->attached_proc_data.userid, info->trap->name,
-                   name.contents ? (char*)name.contents : "",
-                   path.contents ? (char*)path.contents : "");
-            break;
-
-        case OUTPUT_KV:
-            printf("librarymon Time=" FORMAT_TIMEVAL ",PID=%d,PPID=%d,ProcessName=\"%s\","
-                   "Method=%s,ModuleName=\"%s\",ModulePath=\"%s\"\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->attached_proc_data.pid, info->attached_proc_data.ppid, info->attached_proc_data.name,
-                   info->trap->name,
-                   name.contents ? (char*)name.contents : "",
-                   path.contents ? (char*)path.contents : "");
-            break;
-
-        case OUTPUT_JSON:
-        {
-            char* escaped_pname = drakvuf_escape_str(info->attached_proc_data.name);
-            printf( "{"
-                    "\"Plugin\" : \"librarymon\","
-                    "\"TimeStamp\" :" "\"" FORMAT_TIMEVAL "\","
-                    "\"PID\" : %d,"
-                    "\"PPID\": %d,"
-                    "\"ProcessName\": %s,"
-                    "\"Method\" : \"%s\","
-                    "\"ModuleName\" : \"%s\","
-                    "\"ModulePath\" : \"%s\""
-                    "}\n",
-                    UNPACK_TIMEVAL(info->timestamp),
-                    info->attached_proc_data.pid, info->attached_proc_data.ppid, escaped_pname, info->trap->name,
-                    name.contents ? (char*)name.contents : "",
-                    path.contents ? (char*)path.contents : "");
-            g_free(escaped_pname);
-            break;
-        }
-        default:
-        case OUTPUT_DEFAULT:
-            printf("[LIBRARYMON] TIME:" FORMAT_TIMEVAL " VCPU:%" PRIu32 " CR3:0x%" PRIx64 ", EPROCESS:0x%" PRIx64
-                   ", PID:%d, PPID:%d, \"%s\" %s:%" PRIi64 " %s, MODULE_NAME:\"%s\", MODULE_PATH:\"%s\"\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3, info->attached_proc_data.base_addr,
-                   info->attached_proc_data.pid, info->attached_proc_data.ppid, info->attached_proc_data.name,
-                   USERIDSTR(drakvuf), info->attached_proc_data.userid, info->trap->name,
-                   name.contents ? (char*)name.contents : "",
-                   path.contents ? (char*)path.contents : "");
-            break;
+        deffmt::print("librarymon", drakvuf, info,
+                      keyval("EPROCESS", fmt::Xval(info->proc_data.base_addr)),
+                      keyval("MODULE_NAME", fmt::Qstr(cname)),
+                      keyval("MODULE_PATH", fmt::Qstr(cpath))
+                     );
+        return;
     }
+    fmt::print(m_output_format, "librarymon", drakvuf, info,
+               keyval("ModuleName", fmt::Qstr(cname)),
+               keyval("ModulePath", fmt::Qstr(cpath))
+              );
 }

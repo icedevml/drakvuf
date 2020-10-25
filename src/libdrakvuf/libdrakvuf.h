@@ -158,7 +158,8 @@ typedef enum trap_type
     MEMACCESS,
     REGISTER,
     DEBUG,
-    CPUID
+    CPUID,
+    CATCHALL_BREAKPOINT
 } trap_type_t;
 
 typedef enum memaccess_type
@@ -192,6 +193,7 @@ typedef struct drakvuf_trap_info
     addr_t trap_pa;
     x86_registers_t* regs;
     drakvuf_trap_t* trap;
+    uint64_t event_uid; /* Unique sequential event identifier */
     union
     {
         const cpuid_event_t* cpuid; /* For CPUID traps */
@@ -307,25 +309,25 @@ bool drakvuf_get_kernel_struct_size(drakvuf_t drakvuf,
                                     const char* struct_name,
                                     size_t* size) NOEXCEPT;
 bool drakvuf_get_kernel_struct_member_rva(drakvuf_t drakvuf,
-                                          const char* struct_name,
-                                          const char* symbol,
-                                          addr_t* rva) NOEXCEPT;
+        const char* struct_name,
+        const char* symbol,
+        addr_t* rva) NOEXCEPT;
 bool drakvuf_get_bitfield_offset_and_size(drakvuf_t drakvuf,
-                                          const char *struct_name,
-                                          const char *struct_member,
-                                          addr_t *offset,
-                                          size_t *start_bit,
-                                          size_t *end_bit) NOEXCEPT;
+        const char* struct_name,
+        const char* struct_member,
+        addr_t* offset,
+        size_t* start_bit,
+        size_t* end_bit) NOEXCEPT;
 bool json_get_symbol_rva(drakvuf_t drakvuf,
-                         json_object *json,
+                         json_object* json,
                          const char* function,
                          addr_t* rva) NOEXCEPT;
 bool json_get_struct_size(drakvuf_t drakvuf,
-                         json_object *json,
-                         const char* struct_name,
-                         size_t* size) NOEXCEPT;
+                          json_object* json,
+                          const char* struct_name,
+                          size_t* size) NOEXCEPT;
 bool json_get_struct_member_rva(drakvuf_t drakvuf,
-                                json_object *json,
+                                json_object* json,
                                 const char* struct_name,
                                 const char* symbol,
                                 addr_t* rva) NOEXCEPT;
@@ -361,7 +363,8 @@ bool drakvuf_init (drakvuf_t* drakvuf,
                    const char* json_wow_profile,
                    const bool verbose,
                    const bool libvmi_conf,
-                   const addr_t kpgd) NOEXCEPT;
+                   const addr_t kpgd,
+                   const bool fast_singlestep) NOEXCEPT;
 void drakvuf_close (drakvuf_t drakvuf, const bool pause) NOEXCEPT;
 bool drakvuf_add_trap(drakvuf_t drakvuf,
                       drakvuf_trap_t* trap) NOEXCEPT;
@@ -389,7 +392,7 @@ addr_t drakvuf_get_current_process(drakvuf_t drakvuf,
                                    drakvuf_trap_info_t* info) NOEXCEPT;
 
 addr_t drakvuf_get_current_attached_process(drakvuf_t drakvuf,
-                                            drakvuf_trap_info_t* info) NOEXCEPT;
+        drakvuf_trap_info_t* info) NOEXCEPT;
 
 addr_t drakvuf_get_current_thread(drakvuf_t drakvuf,
                                   drakvuf_trap_info_t* info) NOEXCEPT;
@@ -398,7 +401,7 @@ addr_t drakvuf_get_current_thread_teb(drakvuf_t drakvuf,
                                       drakvuf_trap_info_t* info) NOEXCEPT;
 
 addr_t drakvuf_get_current_thread_stackbase(drakvuf_t drakvuf,
-                                            drakvuf_trap_info_t* info) NOEXCEPT;
+        drakvuf_trap_info_t* info) NOEXCEPT;
 
 bool drakvuf_get_last_error(drakvuf_t drakvuf,
                             drakvuf_trap_info_t* info,
@@ -432,7 +435,7 @@ int64_t drakvuf_get_process_userid(drakvuf_t drakvuf,
                                    addr_t process_base) NOEXCEPT;
 
 unicode_string_t* drakvuf_get_process_csdversion(drakvuf_t drakvuf,
-                                                 addr_t process_base) NOEXCEPT;
+        addr_t process_base) NOEXCEPT;
 
 bool drakvuf_get_process_data(drakvuf_t drakvuf,
                               addr_t process_base,
@@ -601,6 +604,13 @@ addr_t drakvuf_get_function_argument(drakvuf_t drakvuf,
                                      int argument_number) NOEXCEPT;
 
 bool drakvuf_get_pid_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle, vmi_pid_t* pid) NOEXCEPT;
+bool drakvuf_get_tid_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle, uint32_t* tid) NOEXCEPT;
+
+bool drakvuf_set_vcpu_gprs(drakvuf_t drakvuf, unsigned int vcpu, registers_t* regs) NOEXCEPT;
+
+bool drakvuf_enable_ipt(drakvuf_t drakvuf, unsigned int vcpu, uint8_t** buf, uint64_t* size);
+bool drakvuf_get_ipt_offset(drakvuf_t drakvuf, unsigned int vcpu, uint64_t* offset, uint64_t* last_offset);
+bool drakvuf_disable_ipt(drakvuf_t drakvuf, unsigned int vcpu);
 
 /*---------------------------------------------------------
  * Event FD functions

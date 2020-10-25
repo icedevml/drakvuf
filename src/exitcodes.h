@@ -102,58 +102,11 @@
  *                                                                         *
  ***************************************************************************/
 
-#include <config.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/prctl.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <inttypes.h>
-#include <dirent.h>
-#include <glib.h>
-#include <math.h>
-#include <err.h>
+#pragma once
 
-#include "xen_helper/xen_helper.h"
-
-int main(int argc, char** argv)
+enum drakvuf_exit_code_t
 {
-    fprintf(stderr, "%s %s v%s Copyright (C) 2014-2020 Tamas K Lengyel\n",
-            PACKAGE_NAME, argv[0], PACKAGE_VERSION);
-
-    if (argc < 3)
-    {
-        printf("Usage: %s <origin domain> <clone domain>\n", argv[0]);
-        return 1;
-    }
-
-    xen_interface_t* xen = NULL;
-    xen_init_interface(&xen);
-
-    if (!xen)
-    {
-        printf("Failed to init Xen interface\n");
-        return 1;
-    }
-
-    char* origin_name = NULL;
-    char* clone_name = NULL;
-    domid_t origin_domID = 0;
-    domid_t clone_domID = 0;
-
-    get_dom_info(xen, argv[1], &origin_domID, &origin_name);
-    get_dom_info(xen, argv[2], &clone_domID, &clone_name);
-
-    if (origin_domID && origin_name && clone_domID && clone_name)
-    {
-        printf("Shared %lu pages %s -> %s\n",
-               xen_memshare(xen, origin_domID, clone_domID),
-               origin_name, clone_name);
-    }
-
-    xen_free_interface(xen);
-}
+    SUCCESS = 0,
+    FAIL = 1,
+    INJECTION_TIMEOUT = 2,
+};

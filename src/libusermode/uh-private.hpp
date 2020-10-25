@@ -124,20 +124,18 @@ struct dll_t
     addr_t pf_max_addr;
 };
 
-template<typename T>
-struct map_view_of_section_result_t : public call_result_t<T>
+struct map_view_of_section_result_t : public call_result_t
 {
-    map_view_of_section_result_t(T* src) : call_result_t<T>(src), section_handle(), process_handle(), base_address_ptr() {}
+    map_view_of_section_result_t() : call_result_t(), section_handle(), process_handle(), base_address_ptr() {}
 
     uint64_t section_handle;
     uint64_t process_handle;
     addr_t base_address_ptr;
 };
 
-template<typename T>
-struct copy_on_write_result_t : public call_result_t<T>
+struct copy_on_write_result_t : public call_result_t
 {
-    copy_on_write_result_t(T* src) : call_result_t<T>(src), vaddr(), pte(), old_cow_pa() {}
+    copy_on_write_result_t() : call_result_t(), vaddr(), pte(), old_cow_pa() {}
 
     addr_t vaddr;
     addr_t pte;
@@ -159,7 +157,7 @@ public:
 
     usermode_reg_status_t init(drakvuf_t drakvuf);
     void register_plugin(drakvuf_t drakvuf, usermode_cb_registration reg);
-    void request_usermode_hook(drakvuf_t drakvuf, const dll_view_t* dll, target_hook_type, const char* func_name, addr_t offset, callback_t callback, const std::vector< std::unique_ptr < ArgumentPrinter > > &argument_printers, void* extra);
+    void request_usermode_hook(drakvuf_t drakvuf, const dll_view_t* dll, const plugin_target_config_entry_t* target, callback_t callback, void* extra);
 };
 
 extern userhook* instance;

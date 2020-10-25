@@ -263,14 +263,14 @@ event_response_t post_mem_cb(vmi_instance_t vmi, vmi_event_t* event)
         {
             fprintf(stderr, "Critical error in re-copying remapped gfn\n");
             drakvuf->interrupted = -1;
-            return 0;
+            goto done;
         }
 
         if ( VMI_FAILURE == vmi_write_pa(drakvuf->vmi, pass->remapped_gfn->r<<12, VMI_PS_4KB, &backup, NULL) )
         {
             fprintf(stderr, "Critical error in re-copying remapped gfn\n");
             drakvuf->interrupted = -1;
-            return 0;
+            goto done;
         }
 
         loop = (GSList*)pass->traps;
@@ -285,7 +285,7 @@ event_response_t post_mem_cb(vmi_instance_t vmi, vmi_event_t* event)
             {
                 fprintf(stderr, "Critical error in re-copying remapped gfn\n");
                 drakvuf->interrupted = -1;
-                return 0;
+                goto done;
             }
 
             if ( test == bp )
@@ -311,8 +311,9 @@ event_response_t post_mem_cb(vmi_instance_t vmi, vmi_event_t* event)
                 }
                 else if ( VMI_FAILURE == vmi_write_8_pa(drakvuf->vmi, (pass->remapped_gfn->r << 12) + (*pa & VMI_BIT_MASK(0, 11)), &bp) )
                 {
+                    fprintf(stderr, "Failed to set breakpoint in post_mem_cb!\n");
                     drakvuf->interrupted = -1;
-                    return 0;
+                    goto done;
                 }
             }
 
@@ -403,6 +404,9 @@ event_response_t pre_mem_cb(vmi_instance_t vmi, vmi_event_t* event)
     trap_info.attached_proc_data.ppid      = attached_proc_data.ppid;
     trap_info.attached_proc_data.userid    = attached_proc_data.userid;
     trap_info.attached_proc_data.tid       = attached_proc_data.tid;
+
+    if (s->traps)
+        trap_info.event_uid = ++drakvuf->event_counter;
 
     GSList* loop = s->traps;
     drakvuf->in_callback = 1;
@@ -501,7 +505,18 @@ event_response_t pre_mem_cb(vmi_instance_t vmi, vmi_event_t* event)
             }
         }
 
-        PRINT_DEBUG("Switching to altp2m view %u on vCPU %u\n", event->slat_id, event->vcpu_id);
+        if ( drakvuf->step_event[event->vcpu_id]->callback == post_mem_cb )
+        {
+            fprintf(stderr, "Error, post_mem_cb wasn't called when expected!\n");
+            drakvuf->interrupted = -1;
+            g_slice_free(struct memcb_pass, pass);
+            g_free( (gpointer)proc_data.name );
+            g_free( (gpointer)attached_proc_data.name );
+            return 0;
+        }
+
+        PRINT_DEBUG("Switching to altp2m view %u on vCPU %u and waiting for post_mem cb\n",
+                    event->slat_id, event->vcpu_id);
 
         drakvuf->step_event[event->vcpu_id]->callback = post_mem_cb;
         drakvuf->step_event[event->vcpu_id]->data = pass;
@@ -606,13 +621,22 @@ event_response_t int3_cb(vmi_instance_t vmi, vmi_event_t* event)
     trap_info.attached_proc_data.userid    = attached_proc_data.userid;
     trap_info.attached_proc_data.tid       = attached_proc_data.tid;
 
+    if (s->traps)
+        trap_info.event_uid = ++drakvuf->event_counter;
+
     drakvuf->in_callback = 1;
-    GSList* loop = s->traps;
-    while (loop)
+    GSList* lists[2] = {drakvuf->catchall_breakpoint, s->traps};
+    // catchall breakpoint will not be fired
+    // if there are no "normal" subscribers for this trap
+    for (int i = 0; s->traps && i < 2; i++)
     {
-        trap_info.trap = (drakvuf_trap_t*)loop->data;
-        rsp |= trap_info.trap->cb(drakvuf, &trap_info);
-        loop = loop->next;
+        GSList* loop = lists[i];
+        while (loop)
+        {
+            trap_info.trap = (drakvuf_trap_t*)loop->data;
+            rsp |= trap_info.trap->cb(drakvuf, &trap_info);
+            loop = loop->next;
+        }
     }
     drakvuf->in_callback = 0;
 
@@ -993,6 +1017,8 @@ void remove_trap(drakvuf_t drakvuf,
             if ( !drakvuf->cpuid )
                 control_cpuid_trap(drakvuf, 0);
             break;
+        case CATCHALL_BREAKPOINT:
+            drakvuf->catchall_breakpoint = g_slist_remove(drakvuf->catchall_breakpoint, trap);
         case __INVALID_TRAP_TYPE: /* fall-through */
         default:
             break;
@@ -1041,10 +1067,6 @@ bool inject_trap_mem(drakvuf_t drakvuf, drakvuf_trap_t* trap, bool guard2)
     }
     else
     {
-
-        status_t ret;
-        xen_unshare_gfn(drakvuf->xen, drakvuf->domID, trap->memaccess.gfn);
-
         s = (struct wrapper*)g_slice_alloc0(sizeof(struct wrapper));
         s->drakvuf = drakvuf;
         s->traps = g_slist_prepend(s->traps, trap);
@@ -1057,7 +1079,7 @@ bool inject_trap_mem(drakvuf_t drakvuf, drakvuf_trap_t* trap, bool guard2)
          */
         s->memaccess.guard2 = guard2;
 
-        ret = vmi_set_mem_event(drakvuf->vmi, trap->memaccess.gfn, trap->memaccess.access, drakvuf->altp2m_idx);
+        status_t ret = vmi_set_mem_event(drakvuf->vmi, trap->memaccess.gfn, trap->memaccess.access, drakvuf->altp2m_idx);
         if ( ret == VMI_FAILURE )
         {
             PRINT_DEBUG("*** FAILED TO SET MEMORY TRAP @ PAGE %lu ***\n",
@@ -1101,13 +1123,6 @@ bool inject_trap_pa(drakvuf_t drakvuf,
 
         return 1;
     }
-
-    /* Check if we have memtraps on this page */
-    struct wrapper* s = (struct wrapper*)g_hash_table_lookup(drakvuf->memaccess_lookup_gfn, &current_gfn);
-    vmi_mem_access_t old_access = VMI_MEMACCESS_INVALID;
-
-    if (s)
-        old_access = s->memaccess.access;
 
     container = (struct wrapper*)g_slice_alloc0(sizeof(struct wrapper));
     if ( !container )
@@ -1190,7 +1205,7 @@ bool inject_trap_pa(drakvuf_t drakvuf,
      */
     container->breakpoint.guard.type = MEMACCESS;
     /* We need to merge rights of the previous traps on this page (if any) */
-    container->breakpoint.guard.memaccess.access = VMI_MEMACCESS_RW | old_access;
+    container->breakpoint.guard.memaccess.access = VMI_MEMACCESS_RW;
     container->breakpoint.guard.memaccess.type = PRE;
     container->breakpoint.guard.memaccess.gfn = current_gfn;
     container->breakpoint.guard2.type = MEMACCESS;
@@ -1422,12 +1437,10 @@ void drakvuf_loop(drakvuf_t drakvuf)
     // Ensures all events are processed from the ring
     drakvuf_poll(drakvuf, 0);
 
-    //print_sharing_info(drakvuf->xen, drakvuf->domID);
-
     PRINT_DEBUG("DRAKVUF loop finished\n");
 }
 
-bool init_vmi(drakvuf_t drakvuf, bool libvmi_conf)
+bool init_vmi(drakvuf_t drakvuf, bool libvmi_conf, bool fast_singlestep)
 {
 
     int rc;
@@ -1507,9 +1520,9 @@ bool init_vmi(drakvuf_t drakvuf, bool libvmi_conf)
     unsigned int i;
     /*
      * Setup singlestep event handlers but don't turn on MTF.
-     * Max 16 CPUs!
+     * Max MAX_DRAKVUF_VCPU CPUs!
      */
-    for (i = 0; i < drakvuf->vcpus && i < 16; i++)
+    for (i = 0; i < drakvuf->vcpus && i < MAX_DRAKVUF_VCPU; i++)
     {
         drakvuf->step_event[i] = (vmi_event_t*)g_try_malloc0(sizeof(vmi_event_t));
         if ( !drakvuf->step_event[i] )
@@ -1609,7 +1622,8 @@ bool init_vmi(drakvuf_t drakvuf, bool libvmi_conf)
         return 0;
     }
 
-    if ( xen_version() >= 14 )
+    // TODO: Fast singlestep is disabled by default for now while a bug is being fixed upstream in Xen
+    if ( fast_singlestep && xen_version() >= 14 )
         drakvuf->int3_response_flags = VMI_EVENT_RESPONSE_SLAT_ID |     // Switch to this ID immediately
                                        VMI_EVENT_RESPONSE_NEXT_SLAT_ID; // Switch to next ID after singlestepping a single instruction
     else
@@ -1698,6 +1712,8 @@ void close_vmi(drakvuf_t drakvuf)
         g_slist_free(drakvuf->cpuid);
     if (drakvuf->cr3)
         g_slist_free(drakvuf->cr3);
+    if (drakvuf->catchall_breakpoint)
+        g_slist_free(drakvuf->catchall_breakpoint);
     if (drakvuf->memaccess_lookup_gfn)
         g_hash_table_destroy(drakvuf->memaccess_lookup_gfn);
     if (drakvuf->memaccess_lookup_trap)
