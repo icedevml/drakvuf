@@ -1,0 +1,19 @@
+name: deb
+on:
+  pull_request:
+    branches: [ master ]
+jobs:
+  deb:
+    runs-on: ubuntu-18.04
+    strategy:
+      fail-fast: false
+      matrix:
+        container:
+          - "debian:buster"
+          - "ubuntu:bionic"
+          - "ubuntu:focal"
+    steps:
+      - uses: actions/checkout@v2
+      - name: deb
+        run: |
+          sh -c 'cd drakvuf && sh package/build.sh ${{ matrix.container }}'
