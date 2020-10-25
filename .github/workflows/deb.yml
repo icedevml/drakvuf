@@ -14,8 +14,6 @@ jobs:
       with:
         tag_name: ${GITHUB_SHA}
         release_name: DRAKVUF ${GITHUB_SHA::8}
-        owner: icedevml
-        repo: drakvuf-builds
         draft: false
         prerelease: false
     - name: Store release URL as file
