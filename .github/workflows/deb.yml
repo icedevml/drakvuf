@@ -6,14 +6,18 @@ jobs:
   release:
     runs-on: ubuntu-18.04
     steps:
+    - name: Generate variables
+      id: gen_vars
+      run: |
+        echo "::set-output name=short_sha::$(echo ${GITHUB_SHA} | cut -c1-8)"
     - name: Create a Release
       uses: actions/create-release@v1
       id: create_release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${GITHUB_SHA}
-        release_name: DRAKVUF ${GITHUB_SHA::8}
+        tag_name: ${{ github.sha }}
+        release_name: DRAKVUF ${{ steps.gen_vars.outputs.short_sha }}
         draft: false
         prerelease: false
     - name: Store release URL as file
