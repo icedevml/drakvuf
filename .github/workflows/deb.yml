@@ -24,6 +24,7 @@ jobs:
         release_name: DRAKVUF ${{ steps.gen_vars.outputs.cur_datetime }} ${{ steps.gen_vars.outputs.short_sha }}
         owner: icedevml
         repo: drakvuf-builds
+        target_commitish: main
         draft: false
         prerelease: false
     - name: Store release URL as file
