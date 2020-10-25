@@ -10,14 +10,15 @@ jobs:
       id: gen_vars
       run: |
         echo "::set-output name=short_sha::$(echo ${GITHUB_SHA} | cut -c1-8)"
+        echo "::set-output name=cur_datetime::$(date '+%Y-%m-%dT%H:%M:%S')"
     - name: Create a Release
       uses: actions/create-release@v1
       id: create_release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ github.sha }}
-        release_name: DRAKVUF ${{ steps.gen_vars.outputs.short_sha }}
+        tag_name: build-${{ github.sha }}
+        release_name: DRAKVUF ${{ steps.gen_vars.outputs.cur_datetime }}-${{ steps.gen_vars.outputs.short_sha }}
         draft: false
         prerelease: false
     - name: Store release URL as file
