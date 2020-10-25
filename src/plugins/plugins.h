@@ -106,6 +106,8 @@
 #define DRAKVUF_PLUGINS_H
 
 #include <config.h>
+#include <array>
+#include <memory>
 #include <stdlib.h>
 #include <inttypes.h>
 #include <sys/time.h>
@@ -126,6 +128,7 @@ struct plugins_options
     const char* iphlpapi_profile;       // PLUGIN_ENVMON
     const char* mpr_profile;            // PLUGIN_ENVMON
     const char* syscalls_filter_file;   // PLUGIN_SYSCALLS
+    bool disable_sysret;                // PLUGIN_SYSCALLS
     bool abort_on_bsod;                 // PLUGIN_BSODMON
     const char* ntdll_profile;          // PLUGIN_LIBRARYMON
     const char* ole32_profile;          // PLUGIN_WMIMON
@@ -133,6 +136,7 @@ struct plugins_options
     const char* combase_profile;        // PLUGIN_WMIMON
     const char* memdump_dir;            // PLUGIN_MEMDUMP
     const char* dll_hooks_list;         // PLUGIN_MEMDUMP, PLUGIN_APIMON
+    bool userhook_no_addr;              // PLUGIN_MEMDUMP, PLUGIN_APIMON
     const char* procdump_dir;           // PLUGIN_PROCDUMP
     bool compress_procdumps = false;    // PLUGIN_PROCDUMP
     const char* clr_profile;            // PLUGIN_MEMDUMP
@@ -165,6 +169,7 @@ typedef enum drakvuf_plugin
     PLUGIN_MEMDUMP,
     PLUGIN_APIMON,
     PLUGIN_PROCDUMP,
+    PLUGIN_RPCMON,
     __DRAKVUF_PLUGIN_LIST_MAX
 } drakvuf_plugin_t;
 
@@ -194,13 +199,14 @@ static const char* drakvuf_plugin_names[] =
     [PLUGIN_MEMDUMP] = "memdump",
     [PLUGIN_APIMON] = "apimon",
     [PLUGIN_PROCDUMP] = "procdump",
+    [PLUGIN_RPCMON] = "rpcmon",
 };
 
 static const bool drakvuf_plugin_os_support[__DRAKVUF_PLUGIN_LIST_MAX][VMI_OS_WINDOWS+1] =
 {
     [PLUGIN_SYSCALLS]     = { [VMI_OS_WINDOWS] = 1, [VMI_OS_LINUX] = 1 },
     [PLUGIN_POOLMON]      = { [VMI_OS_WINDOWS] = 1, [VMI_OS_LINUX] = 0 },
-    [PLUGIN_FILETRACER]   = { [VMI_OS_WINDOWS] = 1, [VMI_OS_LINUX] = 0 },
+    [PLUGIN_FILETRACER]   = { [VMI_OS_WINDOWS] = 1, [VMI_OS_LINUX] = 1 },
     [PLUGIN_FILEDELETE]   = { [VMI_OS_WINDOWS] = 1, [VMI_OS_LINUX] = 0 },
     [PLUGIN_OBJMON]       = { [VMI_OS_WINDOWS] = 1, [VMI_OS_LINUX] = 0 },
     [PLUGIN_EXMON]        = { [VMI_OS_WINDOWS] = 1, [VMI_OS_LINUX] = 0 },
@@ -222,6 +228,7 @@ static const bool drakvuf_plugin_os_support[__DRAKVUF_PLUGIN_LIST_MAX][VMI_OS_WI
     [PLUGIN_MEMDUMP]      = { [VMI_OS_WINDOWS] = 1, [VMI_OS_LINUX] = 0 },
     [PLUGIN_APIMON]       = { [VMI_OS_WINDOWS] = 1, [VMI_OS_LINUX] = 0 },
     [PLUGIN_PROCDUMP]     = { [VMI_OS_WINDOWS] = 1, [VMI_OS_LINUX] = 0 },
+    [PLUGIN_RPCMON]       = { [VMI_OS_WINDOWS] = 1, [VMI_OS_LINUX] = 0 },
 };
 
 class plugin
@@ -236,11 +243,10 @@ private:
     drakvuf_t drakvuf;
     output_format_t output;
     os_t os;
-    plugin* plugins[__DRAKVUF_PLUGIN_LIST_MAX] = { [0 ... __DRAKVUF_PLUGIN_LIST_MAX-1] = nullptr };
+    std::array<std::unique_ptr<plugin>, __DRAKVUF_PLUGIN_LIST_MAX> plugins;
 
 public:
     drakvuf_plugins(drakvuf_t drakvuf, output_format_t output, os_t os);
-    ~drakvuf_plugins();
     int start(drakvuf_plugin_t plugin, const plugins_options* config);
 };
 

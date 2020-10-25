@@ -123,6 +123,7 @@ typedef enum
     INJECTOR_FAILED,
     INJECTOR_FAILED_WITH_ERROR_CODE,
     INJECTOR_SUCCEEDED,
+    INJECTOR_TIMEOUTED,
 } injector_status_t;
 
 typedef enum
@@ -132,6 +133,8 @@ typedef enum
     INJECT_METHOD_SHELLEXEC,
     INJECT_METHOD_SHELLCODE,
     INJECT_METHOD_DOPP,
+    INJECT_METHOD_READ_FILE,
+    INJECT_METHOD_WRITE_FILE,
     // linux
     INJECT_METHOD_EXECPROC,
     INJECT_METHOD_SHELLCODE_LINUX,
@@ -153,11 +156,17 @@ typedef enum
     STATUS_NULL,
     STATUS_ALLOC_OK,
     STATUS_PHYS_ALLOC_OK,
+    STATUS_EXPAND_ENV_OK,
     STATUS_WRITE_OK,
     STATUS_EXEC_OK,
     STATUS_BP_HIT,
     STATUS_CREATE_OK,
     STATUS_RESUME_OK,
+    STATUS_CREATE_FILE_OK,
+    STATUS_READ_FILE_OK,
+    STATUS_WRITE_FILE_OK,
+    STATUS_CLOSE_FILE_OK,
+    STATUS_GET_LAST_ERROR,
     __STATUS_MAX
 } status_type_t;
 
@@ -185,30 +194,31 @@ void init_unicode_argument(struct argument* arg,
     init_argument((arg), ARGUMENT_STRUCT, sizeof((sv)), (void*)&(sv))
 
 bool setup_stack(drakvuf_t drakvuf,
-                 drakvuf_trap_info_t* info,
+                 x86_registers_t* regs,
                  struct argument args[],
                  int nb_args) NOEXCEPT;
 
 bool setup_stack_locked(drakvuf_t drakvuf,
                         vmi_instance_t vmi,
-                        drakvuf_trap_info_t* info,
+                        x86_registers_t* regs,
                         struct argument args[],
                         int nb_args) NOEXCEPT;
 
 injector_status_t injector_start_app(drakvuf_t drakvuf,
-                       vmi_pid_t pid,
-                       uint32_t tid, // optional, if tid=0 the first thread that gets scheduled is used
-                       const char* app,
-                       const char* cwd,
-                       injection_method_t method,
-                       output_format_t format,
-                       const char* binary_path,     // if -m = doppelganging
-                       const char* target_process,  // if -m = doppelganging
-                       bool break_loop_on_detection,
-                       injector_t* injector_to_be_freed,
-                       bool global_search, // out: iff break_loop_on_detection is set
-                       int args_count,
-                       const char* args[]) NOEXCEPT;
+                                     vmi_pid_t pid,
+                                     uint32_t tid, // optional, if tid=0 the first thread that gets scheduled is used
+                                     const char* app,
+                                     const char* cwd,
+                                     injection_method_t method,
+                                     output_format_t format,
+                                     const char* binary_path,     // if -m = doppelganging
+                                     const char* target_process,  // if -m = doppelganging
+                                     bool break_loop_on_detection,
+                                     injector_t* injector_to_be_freed,
+                                     bool global_search, // out: iff break_loop_on_detection is set
+                                     bool wait_for_exit,
+                                     int args_count,
+                                     const char* args[]) NOEXCEPT;
 
 #pragma GCC visibility pop
 

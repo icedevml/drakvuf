@@ -104,6 +104,7 @@
 
 #include "wmimon.h"
 #include "private.h"
+#include "plugins/output_format.h"
 
 bool FAILED(unsigned long rax)
 {
@@ -268,38 +269,34 @@ struct search_breakpoint_by_addr
     const wmimon* m_plugin;
 };
 
-template <typename T>
-struct CoCreateInstanse : public call_result_t<T>
+struct CoCreateInstanse : public call_result_t
 {
-    CoCreateInstanse(T* src) : call_result_t<T>(src), CLSID(), IID(), m_vtable() {}
+    CoCreateInstanse() : call_result_t(), CLSID(), IID(), m_vtable() {}
 
     addr_t CLSID;
     addr_t IID;
     addr_t m_vtable;
 };
 
-template <typename T>
-struct ConnectServerParams : public call_result_t<T>
+struct ConnectServerParams : public call_result_t
 {
-    ConnectServerParams(T* src) : call_result_t<T>(src), m_resource(), m_vtable() {}
+    ConnectServerParams() : call_result_t(), m_resource(), m_vtable() {}
 
     addr_t m_resource;
     addr_t m_vtable;
 };
 
-template <typename T>
-struct ExecQueryParams : public call_result_t<T>
+struct ExecQueryParams : public call_result_t
 {
-    ExecQueryParams(T* src) : call_result_t<T>(src), m_command(), m_vtable() {}
+    ExecQueryParams() : call_result_t(), m_command(), m_vtable() {}
 
     addr_t m_command;
     addr_t m_vtable;
 };
 
-template <typename T>
-struct ExecMethodParams : public call_result_t<T>
+struct ExecMethodParams : public call_result_t
 {
-    ExecMethodParams(T* src) : call_result_t<T>(src), m_object(), m_method(), m_vtable() {}
+    ExecMethodParams() : call_result_t(), m_object(), m_method(), m_vtable() {}
 
     addr_t m_object;
     addr_t m_method;
@@ -365,8 +362,8 @@ private:
 
 event_response_t ExecMethod_return_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
-    auto data = get_trap_params<wmimon, ExecMethodParams<wmimon>>(info);
-    auto plugin = get_trap_plugin<wmimon, ExecMethodParams<wmimon>>(info);
+    auto data = get_trap_params<wmimon, ExecMethodParams>(info);
+    auto plugin = get_trap_plugin<wmimon, ExecMethodParams>(info);
     if (!plugin || !data)
     {
         PRINT_DEBUG("[WMIMon] ExecMethodReturn invalid trap params\n");
@@ -405,49 +402,10 @@ event_response_t ExecMethod_return_handler(drakvuf_t drakvuf, drakvuf_trap_info_
 
     wmi_lock.unlock();
 
-    switch (plugin->m_output_format)
-    {
-        case OUTPUT_CSV:
-            printf("wmimon," FORMAT_TIMEVAL ",%" PRIu32 ",0x%" PRIx64 ",\"%s\",%s,%s,%s\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3,
-                   info->attached_proc_data.name, info->trap->name, reinterpret_cast<char*>(object->contents), reinterpret_cast<char*>(method->contents));
-            break;
-        case OUTPUT_KV:
-            printf("wmimon Time=" FORMAT_TIMEVAL ",PID=%d,PPID=%d,ProcessName=\"%s\",Method=%s,Object=\"%s\",Function=\"%s\"\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->attached_proc_data.pid, info->attached_proc_data.ppid,
-                   info->attached_proc_data.name, info->trap->name, reinterpret_cast<char*>(object->contents),
-                   reinterpret_cast<char*>(method->contents));
-            break;
-        case OUTPUT_JSON:
-        {
-            char proc_name[] = "invalid";
-            printf("{"
-                   "\"Plugin\" : \"wmimon\","
-                   "\"TimeStamp\" :"
-                   "\"" FORMAT_TIMEVAL "\","
-                   "\"ProcessName\": \"%s\","
-                   "\"PID\" : %d,"
-                   "\"PPID\": %d,"
-                   "\"Method\" : \"%s\","
-                   "\"Object\": \"%s\", "
-                   "\"Function\": \"%s\","
-                   "}\n",
-                   UNPACK_TIMEVAL(info->timestamp),
-                   proc_name,
-                   info->attached_proc_data.pid,
-                   info->attached_proc_data.ppid,
-                   info->trap->name,
-                   reinterpret_cast<char*>(object->contents),
-                   reinterpret_cast<char*>(method->contents));
-            break;
-        }
-        default:
-        case OUTPUT_DEFAULT:
-            printf("[WMIMON] TIME:" FORMAT_TIMEVAL " VCPU:%" PRIu32 " CR3:0x%" PRIx64 ",\"%s\":%s,Object:\"%s\",Function:\"%s\"\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3, info->attached_proc_data.name,
-                   info->trap->name, reinterpret_cast<char*>(object->contents), reinterpret_cast<char*>(method->contents));
-            break;
-    }
+    fmt::print(plugin->m_output_format, "wmimon", drakvuf, info,
+               keyval("Object", fmt::Qstr(reinterpret_cast<const char*>(object->contents))),
+               keyval("Function", fmt::Qstr(reinterpret_cast<const char*>(method->contents)))
+              );
 
     vmi_free_unicode_str(object);
     vmi_free_unicode_str(method);
@@ -465,17 +423,15 @@ event_response_t ExecMethod_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* info
         return VMI_EVENT_RESPONSE_NONE;
     }
 
-    auto trap = plugin->register_trap<wmimon, ExecMethodParams<wmimon>>(
-                    drakvuf,
+    auto trap = plugin->register_trap<ExecMethodParams>(
                     info,
-                    plugin,
                     ExecMethod_return_handler,
                     breakpoint_by_dtb_searcher());
 
     if (!trap)
         return VMI_EVENT_RESPONSE_NONE;
 
-    auto params = get_trap_params<wmimon, ExecMethodParams<wmimon>>(trap);
+    auto params = get_trap_params<wmimon, ExecMethodParams>(trap);
     if (!params)
     {
         plugin->destroy_trap(drakvuf, trap);
@@ -492,8 +448,8 @@ event_response_t ExecMethod_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* info
 
 event_response_t GetObject_return_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
-    auto data = get_trap_params<wmimon, ExecMethodParams<wmimon>>(info);
-    auto plugin = get_trap_plugin<wmimon, ExecMethodParams<wmimon>>(info);
+    auto data = get_trap_params<wmimon, ExecMethodParams>(info);
+    auto plugin = get_trap_plugin<wmimon, ExecMethodParams>(info);
     if (!plugin || !data)
     {
         PRINT_DEBUG("[WMIMon] GetObjectReturn invalid trap params\n");
@@ -523,46 +479,9 @@ event_response_t GetObject_return_handler(drakvuf_t drakvuf, drakvuf_trap_info_t
         return VMI_EVENT_RESPONSE_NONE;
     }
 
-    switch (plugin->m_output_format)
-    {
-        case OUTPUT_CSV:
-            printf("wmimon," FORMAT_TIMEVAL ",%" PRIu32 ",0x%" PRIx64 ",\"%s\",%s,%s\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3,
-                   info->attached_proc_data.name, info->trap->name, reinterpret_cast<char*>(object->contents));
-            break;
-        case OUTPUT_KV:
-            printf("wmimon Time=" FORMAT_TIMEVAL ",PID=%d,PPID=%d,ProcessName=\"%s\",Method=%s,Object=\"%s\"\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->attached_proc_data.pid, info->attached_proc_data.ppid,
-                   info->attached_proc_data.name, info->trap->name, reinterpret_cast<char*>(object->contents));
-            break;
-        case OUTPUT_JSON:
-        {
-            char proc_name[] = "invalid";
-            printf("{"
-                   "\"Plugin\" : \"wmimon\","
-                   "\"TimeStamp\" :"
-                   "\"" FORMAT_TIMEVAL "\","
-                   "\"ProcessName\": \"%s\","
-                   "\"PID\" : %d,"
-                   "\"PPID\": %d,"
-                   "\"Method\" : \"%s\","
-                   "\"Object\": \"%s\""
-                   "}\n",
-                   UNPACK_TIMEVAL(info->timestamp),
-                   proc_name,
-                   info->attached_proc_data.pid,
-                   info->attached_proc_data.ppid,
-                   info->trap->name,
-                   reinterpret_cast<char*>(object->contents));
-            break;
-        }
-        default:
-        case OUTPUT_DEFAULT:
-            printf("[WMIMON] TIME:" FORMAT_TIMEVAL " VCPU:%" PRIu32 " CR3:0x%" PRIx64 ",\"%s\":%s,Object:\"%s\"\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3, info->attached_proc_data.name,
-                   info->trap->name, reinterpret_cast<char*>(object->contents));
-            break;
-    }
+    fmt::print(plugin->m_output_format, "wmimon", drakvuf, info,
+               keyval("Object", fmt::Qstr(reinterpret_cast<const char*>(object->contents)))
+              );
 
     vmi_free_unicode_str(object);
     return VMI_EVENT_RESPONSE_NONE;
@@ -579,17 +498,15 @@ event_response_t GetObject_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
         return VMI_EVENT_RESPONSE_NONE;
     }
 
-    auto trap = plugin->register_trap<wmimon, ExecMethodParams<wmimon>>(
-                    drakvuf,
+    auto trap = plugin->register_trap<ExecMethodParams>(
                     info,
-                    plugin,
                     GetObject_return_handler,
                     breakpoint_by_dtb_searcher());
 
     if (!trap)
         return VMI_EVENT_RESPONSE_NONE;
 
-    auto params = get_trap_params<wmimon, ExecMethodParams<wmimon>>(trap);
+    auto params = get_trap_params<wmimon, ExecMethodParams>(trap);
     if (!params)
     {
         plugin->destroy_trap(drakvuf, trap);
@@ -605,8 +522,8 @@ event_response_t GetObject_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 
 event_response_t ExecQuery_return_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
-    auto data = get_trap_params<wmimon, ExecQueryParams<wmimon>>(info);
-    auto plugin = get_trap_plugin<wmimon, ExecQueryParams<wmimon>>(info);
+    auto data = get_trap_params<wmimon, ExecQueryParams>(info);
+    auto plugin = get_trap_plugin<wmimon, ExecQueryParams>(info);
     if (!plugin || !data)
     {
         PRINT_DEBUG("[WMIMon] ExecQueryReturn invalid trap params\n");
@@ -636,46 +553,9 @@ event_response_t ExecQuery_return_handler(drakvuf_t drakvuf, drakvuf_trap_info_t
         return VMI_EVENT_RESPONSE_NONE;
     }
 
-    switch (plugin->m_output_format)
-    {
-        case OUTPUT_CSV:
-            printf("wmimon," FORMAT_TIMEVAL ",%" PRIu32 ",0x%" PRIx64 ",\"%s\",%s,%s\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3,
-                   info->attached_proc_data.name, info->trap->name, reinterpret_cast<char*>(command->contents));
-            break;
-        case OUTPUT_KV:
-            printf("wmimon Time=" FORMAT_TIMEVAL ",PID=%d,PPID=%d,ProcessName=\"%s\",Method=%s,Command=\"%s\"\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->attached_proc_data.pid, info->attached_proc_data.ppid,
-                   info->attached_proc_data.name, info->trap->name, reinterpret_cast<char*>(command->contents));
-            break;
-        case OUTPUT_JSON:
-        {
-            char proc_name[] = "invalid";
-            printf("{"
-                   "\"Plugin\" : \"wmimon\","
-                   "\"TimeStamp\" :"
-                   "\"" FORMAT_TIMEVAL "\","
-                   "\"ProcessName\": \"%s\","
-                   "\"PID\" : %d,"
-                   "\"PPID\": %d,"
-                   "\"Method\" : \"%s\","
-                   "\"Command\": \"%s\""
-                   "}\n",
-                   UNPACK_TIMEVAL(info->timestamp),
-                   proc_name,
-                   info->attached_proc_data.pid,
-                   info->attached_proc_data.ppid,
-                   info->trap->name,
-                   reinterpret_cast<char*>(command->contents));
-            break;
-        }
-        default:
-        case OUTPUT_DEFAULT:
-            printf("[WMIMON] TIME:" FORMAT_TIMEVAL " VCPU:%" PRIu32 " CR3:0x%" PRIx64 ",\"%s\":%s,Command:\"%s\"\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3, info->attached_proc_data.name,
-                   info->trap->name, reinterpret_cast<char*>(command->contents));
-            break;
-    }
+    fmt::print(plugin->m_output_format, "wmimon", drakvuf, info,
+               keyval("Command", fmt::Qstr(reinterpret_cast<const char*>(command->contents)))
+              );
 
     vmi_free_unicode_str(command);
     return VMI_EVENT_RESPONSE_NONE;
@@ -692,17 +572,15 @@ event_response_t ExecQuery_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
         return VMI_EVENT_RESPONSE_NONE;
     }
 
-    auto trap = plugin->register_trap<wmimon, ExecQueryParams<wmimon>>(
-                    drakvuf,
+    auto trap = plugin->register_trap<ExecQueryParams>(
                     info,
-                    plugin,
                     ExecQuery_return_handler,
                     breakpoint_by_dtb_searcher());
 
     if (!trap)
         return VMI_EVENT_RESPONSE_NONE;
 
-    auto params = get_trap_params<wmimon, ExecQueryParams<wmimon>>(trap);
+    auto params = get_trap_params<wmimon, ExecQueryParams>(trap);
     if (!params)
     {
         plugin->destroy_trap(drakvuf, trap);
@@ -718,8 +596,8 @@ event_response_t ExecQuery_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 
 event_response_t ConnectServer_return_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
-    auto data = get_trap_params<wmimon, ConnectServerParams<wmimon>>(info);
-    auto plugin = get_trap_plugin<wmimon, ConnectServerParams<wmimon>>(info);
+    auto data = get_trap_params<wmimon, ConnectServerParams>(info);
+    auto plugin = get_trap_plugin<wmimon, ConnectServerParams>(info);
     if (!plugin || !data)
     {
         PRINT_DEBUG("[WMIMon] ConnectServerReturn invalid trap params\n");
@@ -749,46 +627,9 @@ event_response_t ConnectServer_return_handler(drakvuf_t drakvuf, drakvuf_trap_in
         return VMI_EVENT_RESPONSE_NONE;
     }
 
-    switch (plugin->m_output_format)
-    {
-        case OUTPUT_CSV:
-            printf("wmimon," FORMAT_TIMEVAL ",%" PRIu32 ",0x%" PRIx64 ",\"%s\",%s,%s\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3,
-                   info->attached_proc_data.name, info->trap->name, reinterpret_cast<char*>(resource->contents));
-            break;
-        case OUTPUT_KV:
-            printf("wmimon Time=" FORMAT_TIMEVAL ",PID=%d,PPID=%d,ProcessName=\"%s\",Method=%s,Resource=\"%s\"\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->attached_proc_data.pid, info->attached_proc_data.ppid,
-                   info->attached_proc_data.name, info->trap->name, reinterpret_cast<char*>(resource->contents));
-            break;
-        case OUTPUT_JSON:
-        {
-            char proc_name[] = "invalid";
-            printf("{"
-                   "\"Plugin\" : \"wmimon\","
-                   "\"TimeStamp\" :"
-                   "\"" FORMAT_TIMEVAL "\","
-                   "\"ProcessName\": \"%s\","
-                   "\"PID\" : %d,"
-                   "\"PPID\": %d,"
-                   "\"Method\" : \"%s\","
-                   "\"Resource\" : \"%s\""
-                   "}\n",
-                   UNPACK_TIMEVAL(info->timestamp),
-                   proc_name,
-                   info->attached_proc_data.pid,
-                   info->attached_proc_data.ppid,
-                   info->trap->name,
-                   reinterpret_cast<char*>(resource->contents));
-            break;
-        }
-        default:
-        case OUTPUT_DEFAULT:
-            printf("[WMIMON] TIME:" FORMAT_TIMEVAL " VCPU:%" PRIu32 " CR3:0x%" PRIx64 ",\"%s\":%s,Resource:%s\n",
-                   UNPACK_TIMEVAL(info->timestamp), info->vcpu, info->regs->cr3, info->attached_proc_data.name,
-                   info->trap->name, reinterpret_cast<char*>(resource->contents));
-            break;
-    }
+    fmt::print(plugin->m_output_format, "wmimon", drakvuf, info,
+               keyval("Resource", fmt::Qstr(reinterpret_cast<const char*>(resource->contents)))
+              );
 
     vmi_free_unicode_str(resource);
 
@@ -797,14 +638,9 @@ event_response_t ConnectServer_return_handler(drakvuf_t drakvuf, drakvuf_trap_in
         vtable vt(drakvuf, info, data->m_vtable, 26);
 
         search_breakpoint_by_addr bp(plugin, vt[20]);
-        plugin->register_trap<wmimon>(drakvuf, info, plugin, ExecQuery_handler,
-                                      bp, "ExecQuery");
-
-        plugin->register_trap<wmimon>(drakvuf, info, plugin, GetObject_handler,
-                                      bp.set_addr(vt[6]), "GetObject");
-
-        plugin->register_trap<wmimon>(drakvuf, info, plugin, ExecMethod_handler,
-                                      bp.set_addr(vt[24]), "ExecMethod");
+        plugin->register_trap(info, ExecQuery_handler, bp, "ExecQuery");
+        plugin->register_trap(info, GetObject_handler, bp.set_addr(vt[6]), "GetObject");
+        plugin->register_trap(info, ExecMethod_handler, bp.set_addr(vt[24]), "ExecMethod");
     }
     catch (const std::exception& e)
     {
@@ -825,17 +661,15 @@ event_response_t ConnectServer_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* i
         return VMI_EVENT_RESPONSE_NONE;
     }
 
-    auto trap = plugin->register_trap<wmimon, ConnectServerParams<wmimon>>(
-                    drakvuf,
+    auto trap = plugin->register_trap<ConnectServerParams>(
                     info,
-                    plugin,
                     ConnectServer_return_handler,
                     breakpoint_by_dtb_searcher());
 
     if (!trap)
         return VMI_EVENT_RESPONSE_NONE;
 
-    auto params = get_trap_params<wmimon, ConnectServerParams<wmimon>>(trap);
+    auto params = get_trap_params<wmimon, ConnectServerParams>(trap);
     if (!params)
     {
         plugin->destroy_trap(drakvuf, trap);
@@ -852,8 +686,8 @@ event_response_t ConnectServer_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* i
 
 event_response_t CoCreateInstanse_return_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
-    auto data = get_trap_params<wmimon, CoCreateInstanse<wmimon>>(info);
-    auto plugin = get_trap_plugin<wmimon, CoCreateInstanse<wmimon>>(info);
+    auto data = get_trap_params<wmimon, CoCreateInstanse>(info);
+    auto plugin = get_trap_plugin<wmimon, CoCreateInstanse>(info);
     if (!plugin || !data)
     {
         PRINT_DEBUG("[WMIMon] CoCreateInstanse_return invalid trap params!\n");
@@ -870,8 +704,7 @@ event_response_t CoCreateInstanse_return_handler(drakvuf_t drakvuf, drakvuf_trap
     {
         vtable vt(drakvuf, info, data->m_vtable, 4);
 
-        plugin->register_trap<wmimon>(drakvuf, info, plugin, ConnectServer_handler,
-                                      search_breakpoint_by_addr(plugin, vt[3]), "ConnectServer");
+        plugin->register_trap(info, ConnectServer_handler, search_breakpoint_by_addr(plugin, vt[3]), "ConnectServer");
     }
     catch (const std::exception& e)
     {
@@ -920,16 +753,12 @@ event_response_t CoCreateInstanse_handler(drakvuf_t drakvuf, drakvuf_trap_info_t
             return VMI_EVENT_RESPONSE_NONE;
     }
 
-    auto trap = plugin->register_trap<wmimon, CoCreateInstanse<wmimon>>(drakvuf,
-                info,
-                plugin,
-                CoCreateInstanse_return_handler,
-                breakpoint_by_dtb_searcher());
+    auto trap = plugin->register_trap<CoCreateInstanse>(info, CoCreateInstanse_return_handler, breakpoint_by_dtb_searcher());
 
     if (!trap)
         return VMI_EVENT_RESPONSE_NONE;
 
-    auto params = get_trap_params<wmimon, CoCreateInstanse<wmimon>>(trap);
+    auto params = get_trap_params<wmimon, CoCreateInstanse>(trap);
     if (!params)
     {
         plugin->destroy_trap(drakvuf, trap);
@@ -992,7 +821,7 @@ wmimon::wmimon(drakvuf_t drakvuf, const wmimon_config* c, output_format_t output
 
     PRINT_DEBUG("[WMIMon] attempt to setup a trap for \"%s::CoCreateInstance\"\n", dll_name);
     breakpoint_in_dll_module_searcher bp(profile, dll_name);
-    if (!register_trap<wmimon>(drakvuf, nullptr, this, CoCreateInstanse_handler, bp.for_syscall_name("CoCreateInstance")))
+    if (!register_trap(nullptr, CoCreateInstanse_handler, bp.for_syscall_name("CoCreateInstance")))
         throw -1;
 
     // if (c->wow_ole32_profile)

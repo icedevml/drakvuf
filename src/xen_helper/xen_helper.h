@@ -111,6 +111,7 @@
 
 #include <libxl_utils.h>
 #include <xenctrl.h>
+#include <xenforeignmemory.h>
 
 typedef struct xen_interface
 {
@@ -118,9 +119,22 @@ typedef struct xen_interface
     xc_interface* xc;
     libxl_ctx* xl_ctx;
     xentoollog_logger* xl_logger;
-    xc_evtchn *evtchn;             // the Xen event channel
+    xc_evtchn* evtchn;             // the Xen event channel
     int evtchn_fd;                 // its FD
+
+    xenforeignmemory_handle* fmem;
 } xen_interface_t;
+
+typedef struct ipt_state
+{
+    uint8_t* buf;
+    uint64_t size;
+
+    uint64_t offset;
+    uint64_t last_offset;
+
+    xenforeignmemory_resource_handle* fres;
+} ipt_state_t;
 
 /* FUNCTIONS */
 
@@ -132,15 +146,15 @@ int get_dom_info(xen_interface_t* xen, const char* input, domid_t* domID,
 
 uint64_t xen_get_maxmemkb(xen_interface_t* xen, domid_t domID);
 
-uint64_t xen_memshare(xen_interface_t* xen, domid_t domID, domid_t cloneID);
-void xen_unshare_gfn(xen_interface_t* xen, domid_t domID, unsigned long gfn);
-
-void print_sharing_info(xen_interface_t* xen, domid_t domID);
-
 bool xen_pause(xen_interface_t* xen, domid_t domID);
 void xen_resume(xen_interface_t* xen, domid_t domID);
 void xen_force_resume(xen_interface_t* xen, domid_t domID);
 bool xen_enable_altp2m(xen_interface_t* xen, domid_t domID);
 int xen_version(void);
+bool xen_get_vcpu_ctx(xen_interface_t* xen, domid_t domID, unsigned int vcpu, vcpu_guest_context_any_t* regs);
+bool xen_set_vcpu_ctx(xen_interface_t* xen, domid_t domID, unsigned int vcpu, vcpu_guest_context_any_t* regs);
 
+int xen_enable_ipt(xen_interface_t* xen, domid_t domID, unsigned int vcpu, ipt_state_t* ipt_state);
+int xen_get_ipt_offset(xen_interface_t* xen, domid_t domID, unsigned int vcpu, ipt_state_t* ipt_state);
+int xen_disable_ipt(xen_interface_t* xen, domid_t domID, unsigned int vcpu, ipt_state_t* ipt_state);
 #endif

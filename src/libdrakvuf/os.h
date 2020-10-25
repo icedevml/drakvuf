@@ -212,7 +212,7 @@ typedef struct os_interface
     (drakvuf_t drakvuf, drakvuf_trap_info_t* info);
 
     addr_t (*get_function_argument)
-    (drakvuf_t drakvuf, drakvuf_trap_info_t* info, int narg);
+    (drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t narg);
 
     bool (*enumerate_processes)
     (drakvuf_t drakvuf, void (*visitor_func)(drakvuf_t drakvuf, addr_t process, void* visitor_ctx), void* visitor_ctx);
@@ -240,6 +240,9 @@ typedef struct os_interface
 
     bool (*get_pid_from_handle)
     (drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle, vmi_pid_t* pid);
+
+    bool (*get_tid_from_handle)
+    (drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle, uint32_t* tid);
 
     bool (*get_wow_context)
     (drakvuf_t drakvuf, addr_t ethread, addr_t* wow_ctx);

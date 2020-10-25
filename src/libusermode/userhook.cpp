@@ -102,22 +102,23 @@
  *                                                                         *
  ***************************************************************************/
 
- /**
-  * User mode hooking module.
-  *
-  * (1) Observes when a process is loading a new DLL through the side effects
-  * of NtMapViewOfSection or NtProtectVirtualMemory being called.
-  * (2) Finds the DLL export information and checks if it's fully readable,
-  * if not, triggers a page fault to force system to load it into memory.
-  * (3) Translates given export symbols to virtual addresses, checks if
-  * the underlying memory is available (if not, again triggers page fault)
-  * and finally adds a standard DRAKVUF trap.
-  */
+/**
+ * User mode hooking module.
+ *
+ * (1) Observes when a process is loading a new DLL through the side effects
+ * of NtMapViewOfSection or NtProtectVirtualMemory being called.
+ * (2) Finds the DLL export information and checks if it's fully readable,
+ * if not, triggers a page fault to force system to load it into memory.
+ * (3) Translates given export symbols to virtual addresses, checks if
+ * the underlying memory is available (if not, again triggers page fault)
+ * and finally adds a standard DRAKVUF trap.
+ */
 
 #include <fstream>
 #include <sstream>
 #include <map>
 #include <string>
+#include <optional>
 
 #include <config.h>
 #include <glib.h>
@@ -143,7 +144,7 @@ static void wrap_delete(drakvuf_trap_t* trap)
  * Check if this thread is currently in process of loading a DLL.
  * If so, return a pointer to the associated metadata.
  */
-static dll_t* get_pending_dll(drakvuf_t drakvuf, drakvuf_trap_info * info, userhook * plugin)
+static dll_t* get_pending_dll(drakvuf_t drakvuf, drakvuf_trap_info* info, userhook* plugin)
 {
     uint32_t thread_id;
     if (!drakvuf_get_current_thread_id(drakvuf, info, &thread_id))
@@ -167,7 +168,7 @@ static dll_t* get_pending_dll(drakvuf_t drakvuf, drakvuf_trap_info * info, userh
  * Check if DLL is interesting, if so, build a "hooking context" of a DLL. Such context is needed,
  * because user mode hooking is a stateful operation which requires a VM to be un-paused many times.
  */
-static dll_t* create_dll_meta(drakvuf_t drakvuf, drakvuf_trap_info * info, userhook * plugin, addr_t dll_base)
+static dll_t* create_dll_meta(drakvuf_t drakvuf, drakvuf_trap_info* info, userhook* plugin, addr_t dll_base)
 {
     mmvad_info_t mmvad;
     if (!drakvuf_find_mmvad(drakvuf, info->proc_data.base_addr, dll_base, &mmvad))
@@ -203,11 +204,13 @@ static dll_t* create_dll_meta(drakvuf_t drakvuf, drakvuf_trap_info * info, userh
         .v.is_hooked = false
     };
 
-    for (auto &reg : plugin->plugins) {
+    for (auto& reg : plugin->plugins)
+    {
         reg.pre_cb(drakvuf, (const dll_view_t*)&dll_meta, reg.extra);
     }
 
-    if (dll_meta.targets.empty()) {
+    if (dll_meta.targets.empty())
+    {
         return nullptr;
     }
 
@@ -267,7 +270,7 @@ static dll_t* create_dll_meta(drakvuf_t drakvuf, drakvuf_trap_info * info, userh
     return &it->second.back();
 }
 
-static bool make_trap(vmi_instance_t vmi, drakvuf_t drakvuf, drakvuf_trap_info * info, hook_target_entry_t * target, addr_t exec_func)
+static bool make_trap(vmi_instance_t vmi, drakvuf_t drakvuf, drakvuf_trap_info* info, hook_target_entry_t* target, addr_t exec_func)
 {
     target->pid = info->proc_data.pid;
 
@@ -296,11 +299,11 @@ static bool make_trap(vmi_instance_t vmi, drakvuf_t drakvuf, drakvuf_trap_info *
 
 fail:
     PRINT_DEBUG("[USERHOOK] Failed to add trap :(\n");
-    delete trap;
+    g_slice_free(drakvuf_trap_t, trap);
     return false;
 }
 
-static event_response_t internal_perform_hooking(drakvuf_t drakvuf, drakvuf_trap_info * info, userhook * plugin, dll_t * dll_meta)
+static event_response_t internal_perform_hooking(drakvuf_t drakvuf, drakvuf_trap_info* info, userhook* plugin, dll_t* dll_meta)
 {
     vmi_lock_guard lg(drakvuf);
 
@@ -355,6 +358,8 @@ static event_response_t internal_perform_hooking(drakvuf_t drakvuf, drakvuf_trap
                     target.state = HOOK_FAILED;
                     return VMI_EVENT_RESPONSE_NONE;
                 }
+
+                target.offset = exec_func - dll_meta->v.real_dll_base;
             }
             else // HOOK_BY_OFFSET
             {
@@ -397,10 +402,10 @@ static event_response_t internal_perform_hooking(drakvuf_t drakvuf, drakvuf_trap
             }
 
             PRINT_DEBUG("[USERHOOK] Hook %s (vaddr = 0x%llx, dll_base = 0x%llx, result = %s)\n",
-                target.target_name.c_str(),
-                (unsigned long long)exec_func,
-                (unsigned long long)dll_meta->v.real_dll_base,
-                target.state == HOOK_OK ? "OK" : "FAIL");
+                        target.target_name.c_str(),
+                        (unsigned long long)exec_func,
+                        (unsigned long long)dll_meta->v.real_dll_base,
+                        target.state == HOOK_OK ? "OK" : "FAIL");
         }
     }
 
@@ -409,14 +414,23 @@ static event_response_t internal_perform_hooking(drakvuf_t drakvuf, drakvuf_trap
     return VMI_EVENT_RESPONSE_NONE;
 }
 
-static event_response_t perform_hooking(drakvuf_t drakvuf, drakvuf_trap_info * info, userhook * plugin, dll_t * dll_meta)
+static event_response_t perform_hooking(drakvuf_t drakvuf, drakvuf_trap_info* info, userhook* plugin, dll_t* dll_meta)
 {
     bool was_hooked = dll_meta->v.is_hooked;
     event_response_t ret = internal_perform_hooking(drakvuf, info, plugin, dll_meta);
 
-    if (!was_hooked && dll_meta->v.is_hooked) {
-        for (auto& reg : plugin->plugins) {
-            reg.post_cb(drakvuf, (const dll_view_t*)dll_meta, reg.extra);
+    if (!was_hooked && dll_meta->v.is_hooked)
+    {
+        std::vector<hook_target_view_t> targets;
+
+        for (auto& target : dll_meta->targets)
+        {
+            targets.emplace_back(target.target_name, target.offset, target.state);
+        }
+
+        for (auto& reg : plugin->plugins)
+        {
+            reg.post_cb(drakvuf, (const dll_view_t*)dll_meta, targets, reg.extra);
         }
     }
 
@@ -427,7 +441,7 @@ static event_response_t perform_hooking(drakvuf_t drakvuf, drakvuf_trap_info * i
  * This is used in order to observe when SysWOW64 process is loading a new DLL.
  * If the DLL is interesting, we perform further investigation and try to equip user mode hooks.
  */
-static event_response_t protect_virtual_memory_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info_t * info)
+static event_response_t protect_virtual_memory_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     // IN HANDLE ProcessHandle
     uint64_t process_handle = drakvuf_get_function_argument(drakvuf, info, 1);
@@ -438,10 +452,8 @@ static event_response_t protect_virtual_memory_hook_cb(drakvuf_t drakvuf, drakvu
         return VMI_EVENT_RESPONSE_NONE;
 
     auto plugin = get_trap_plugin<userhook>(info);
-    if (!plugin)
-        return VMI_EVENT_RESPONSE_NONE;
 
-    dll_t * dll_meta = get_pending_dll(drakvuf, info, plugin);
+    dll_t* dll_meta = get_pending_dll(drakvuf, info, plugin);
 
     if (!dll_meta)
     {
@@ -474,18 +486,12 @@ static event_response_t protect_virtual_memory_hook_cb(drakvuf_t drakvuf, drakvu
  * This is used in order to observe when 64 bit process is loading a new DLL.
  * If the DLL is interesting, we perform further investigation and try to equip user mode hooks.
  */
-static event_response_t map_view_of_section_ret_cb(drakvuf_t drakvuf, drakvuf_trap_info_t * info)
+static event_response_t map_view_of_section_ret_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
-    auto data = get_trap_params<userhook, map_view_of_section_result_t<userhook>>(info);
-    userhook* plugin = data->plugin();
+    auto plugin = get_trap_plugin<userhook>(info);
+    auto params = get_trap_params<map_view_of_section_result_t>(info);
 
-    if (!data || !plugin)
-    {
-        PRINT_DEBUG("[USERHOOK] map_view_of_section_ret_cb invalid trap params!\n");
-        return VMI_EVENT_RESPONSE_NONE;
-    }
-
-    if (!data->verify_result_call_params(info, drakvuf_get_current_thread(drakvuf, info)))
+    if (!params->verify_result_call_params(info, drakvuf_get_current_thread(drakvuf, info)))
         return VMI_EVENT_RESPONSE_NONE;
 
     dll_t* dll_meta = get_pending_dll(drakvuf, info, plugin);
@@ -498,7 +504,7 @@ static event_response_t map_view_of_section_ret_cb(drakvuf_t drakvuf, drakvuf_tr
         {
             .translate_mechanism = VMI_TM_PROCESS_DTB,
             .dtb = info->regs->cr3,
-            .addr = data->base_address_ptr
+            .addr = params->base_address_ptr
         };
 
         vmi_instance_t vmi = drakvuf_lock_and_get_vmi(drakvuf);
@@ -514,40 +520,28 @@ static event_response_t map_view_of_section_ret_cb(drakvuf_t drakvuf, drakvuf_tr
     if (dll_meta)
         return perform_hooking(drakvuf, info, plugin, dll_meta);
 
-    plugin->destroy_trap(drakvuf, info->trap);
+    plugin->destroy_trap(info->trap);
     return VMI_EVENT_RESPONSE_NONE;
 }
 
-static event_response_t map_view_of_section_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info_t * info)
+static event_response_t map_view_of_section_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     auto plugin = get_trap_plugin<userhook>(info);
-    if (!plugin)
-        return VMI_EVENT_RESPONSE_NONE;
+    auto trap = plugin->register_trap<map_view_of_section_result_t>(
+                    info,
+                    map_view_of_section_ret_cb,
+                    breakpoint_by_pid_searcher());
 
-    auto trap = plugin->register_trap<userhook, map_view_of_section_result_t<userhook>>(
-        drakvuf,
-        info,
-        plugin,
-        map_view_of_section_ret_cb,
-        breakpoint_by_pid_searcher());
-    if (!trap)
-        return VMI_EVENT_RESPONSE_NONE;
+    auto params = get_trap_params<map_view_of_section_result_t>(trap);
 
-    auto data = get_trap_params<userhook, map_view_of_section_result_t<userhook>>(trap);
-    if (!data)
-    {
-        plugin->destroy_plugin_params(plugin->detach_plugin_params(trap));
-        return VMI_EVENT_RESPONSE_NONE;
-    }
-
-    data->set_result_call_params(info, drakvuf_get_current_thread(drakvuf, info));
+    params->set_result_call_params(info, drakvuf_get_current_thread(drakvuf, info));
 
     // IN HANDLE SectionHandle
-    data->section_handle = drakvuf_get_function_argument(drakvuf, info, 1);
+    params->section_handle = drakvuf_get_function_argument(drakvuf, info, 1);
     // IN HANDLE ProcessHandle
-    data->process_handle = drakvuf_get_function_argument(drakvuf, info, 2);
+    params->process_handle = drakvuf_get_function_argument(drakvuf, info, 2);
     // IN OUT PVOID *BaseAddress
-    data->base_address_ptr = drakvuf_get_function_argument(drakvuf, info, 3);
+    params->base_address_ptr = drakvuf_get_function_argument(drakvuf, info, 3);
 
     return VMI_EVENT_RESPONSE_NONE;
 }
@@ -558,13 +552,11 @@ static event_response_t map_view_of_section_hook_cb(drakvuf_t drakvuf, drakvuf_t
  * we check if it was "our fault" and if so, we forcefully return EXCEPTION_CONTINUE_EXECUTION.
  * In any other case, we just pass the control to the original exception handler.
  */
-static event_response_t system_service_handler_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info_t * info)
+static event_response_t system_service_handler_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     PRINT_DEBUG("[USERHOOK] Entered system service handler\n");
 
     auto plugin = get_trap_plugin<userhook>(info);
-    if (!plugin)
-        return VMI_EVENT_RESPONSE_NONE;
 
     uint32_t thread_id;
 
@@ -625,11 +617,9 @@ static event_response_t system_service_handler_hook_cb(drakvuf_t drakvuf, drakvu
 /**
  * Observe process exit and remove all user mode hooks
  */
-static event_response_t terminate_process_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info_t * info)
+static event_response_t terminate_process_hook_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     auto plugin = get_trap_plugin<userhook>(info);
-    if (!plugin)
-        return VMI_EVENT_RESPONSE_NONE;
 
     auto vec_it = plugin->loaded_dlls.find(info->regs->cr3);
 
@@ -643,7 +633,7 @@ static event_response_t terminate_process_hook_cb(drakvuf_t drakvuf, drakvuf_tra
             if (target.state == HOOK_OK)
             {
                 PRINT_DEBUG("[USERHOOK] Erased trap for pid %d %s\n", info->proc_data.pid,
-                    target.target_name.c_str());
+                            target.target_name.c_str());
                 drakvuf_remove_trap(drakvuf, target.trap, NULL);
             }
         }
@@ -653,21 +643,15 @@ static event_response_t terminate_process_hook_cb(drakvuf_t drakvuf, drakvuf_tra
     return VMI_EVENT_RESPONSE_NONE;
 }
 
-static event_response_t copy_on_write_ret_cb(drakvuf_t drakvuf, drakvuf_trap_info_t * info)
+static event_response_t copy_on_write_ret_cb(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
-    auto data = get_trap_params<userhook, copy_on_write_result_t<userhook>>(info);
-    userhook* plugin = data->plugin();
+    auto plugin = get_trap_plugin<userhook>(info);
+    auto params = get_trap_params<copy_on_write_result_t>(info);
 
-    if (!data || !plugin)
-    {
-        PRINT_DEBUG("[USERHOOK] copy_on_write_ret_cb invalid trap params!\n");
-        return VMI_EVENT_RESPONSE_NONE;
-    }
-
-    if (!data->verify_result_call_params(info, drakvuf_get_current_thread(drakvuf, info)))
+    if (!params->verify_result_call_params(info, drakvuf_get_current_thread(drakvuf, info)))
         return VMI_EVENT_RESPONSE_NONE;
 
-    plugin->destroy_trap(drakvuf, info->trap);
+    plugin->destroy_trap(info->trap);
 
     vmi_lock_guard lg(drakvuf);
 
@@ -675,21 +659,21 @@ static event_response_t copy_on_write_ret_cb(drakvuf_t drakvuf, drakvuf_trap_inf
     vmi_v2pcache_flush(lg.vmi, info->regs->cr3);
     addr_t pa;
 
-    if (vmi_pagetable_lookup(lg.vmi, info->regs->cr3, data->vaddr, &pa) != VMI_SUCCESS)
+    if (vmi_pagetable_lookup(lg.vmi, info->regs->cr3, params->vaddr, &pa) != VMI_SUCCESS)
     {
         PRINT_DEBUG("[USERHOOK] failed to get pa\n");
         return VMI_EVENT_RESPONSE_NONE;
     }
 
-    if (data->old_cow_pa == pa)
+    if (params->old_cow_pa == pa)
     {
         PRINT_DEBUG("[USERHOOK] PA after CoW remained the same, wtf? Nothing to do here...\n");
         return VMI_EVENT_RESPONSE_NONE;
     }
 
-    for (auto& hook : data->hooks)
+    for (auto& hook : params->hooks)
     {
-        addr_t hook_va = ((data->vaddr >> 12) << 12) + (hook->trap->breakpoint.addr & 0xFFF);
+        addr_t hook_va = ((params->vaddr >> 12) << 12) + (hook->trap->breakpoint.addr & 0xFFF);
         PRINT_DEBUG("adding hook at %lx\n", hook_va);
 
         if (hook->trap)
@@ -705,17 +689,16 @@ static event_response_t copy_on_write_ret_cb(drakvuf_t drakvuf, drakvuf_trap_inf
     return VMI_EVENT_RESPONSE_NONE;
 }
 
-static event_response_t copy_on_write_handler(drakvuf_t drakvuf, drakvuf_trap_info_t * info)
+static event_response_t copy_on_write_handler(drakvuf_t drakvuf, drakvuf_trap_info_t* info)
 {
     auto plugin = get_trap_plugin<userhook>(info);
-    if (!plugin)
-        return VMI_EVENT_RESPONSE_NONE;
 
     addr_t vaddr = drakvuf_get_function_argument(drakvuf, info, 1);
     addr_t pte = drakvuf_get_function_argument(drakvuf, info, 2);
     addr_t pa;
 
-    { // using vmi
+    {
+        // using vmi
         vmi_lock_guard lg(drakvuf);
 
         if (vmi_pagetable_lookup(lg.vmi, info->regs->cr3, vaddr, &pa) != VMI_SUCCESS)
@@ -748,28 +731,21 @@ static event_response_t copy_on_write_handler(drakvuf_t drakvuf, drakvuf_trap_in
     {
         PRINT_DEBUG("USERHOOK] Found %zu hooks on CoW page, registering return trap\n", hooks.size());
 
-        auto trap = plugin->register_trap<userhook, copy_on_write_result_t<userhook>>(
-            drakvuf,
-            info,
-            plugin,
-            copy_on_write_ret_cb,
-            breakpoint_by_pid_searcher());
+        auto trap = plugin->register_trap<copy_on_write_result_t>(
+                        info,
+                        copy_on_write_ret_cb,
+                        breakpoint_by_pid_searcher());
         if (!trap)
             return VMI_EVENT_RESPONSE_NONE;
 
-        auto data = get_trap_params<userhook, copy_on_write_result_t<userhook>>(trap);
-        if (!data)
-        {
-            plugin->destroy_plugin_params(plugin->detach_plugin_params(trap));
-            return VMI_EVENT_RESPONSE_NONE;
-        }
+        auto params = get_trap_params<copy_on_write_result_t>(trap);
 
-        data->set_result_call_params(info, drakvuf_get_current_thread(drakvuf, info));
+        params->set_result_call_params(info, drakvuf_get_current_thread(drakvuf, info));
 
-        data->vaddr = vaddr;
-        data->pte = pte;
-        data->old_cow_pa = pa;
-        data->hooks = hooks;
+        params->vaddr = vaddr;
+        params->pte = pte;
+        params->old_cow_pa = pa;
+        params->hooks = hooks;
     }
 
     return VMI_EVENT_RESPONSE_NONE;
@@ -796,17 +772,18 @@ usermode_reg_status_t userhook::init(drakvuf_t drakvuf)
         return USERMODE_ARCH_UNSUPPORTED;
     }
 
-    if (this->initialized) {
+    if (this->initialized)
+    {
         PRINT_DEBUG("[USERHOOK] Attempted double initialization.\n");
         return USERMODE_REGISTER_ERROR;
     }
 
     breakpoint_in_system_process_searcher bp;
-    if (!register_trap<userhook>(drakvuf, nullptr, this, protect_virtual_memory_hook_cb, bp.for_syscall_name("NtProtectVirtualMemory")) ||
-        !register_trap<userhook>(drakvuf, nullptr, this, map_view_of_section_hook_cb, bp.for_syscall_name("NtMapViewOfSection")) ||
-        !register_trap<userhook>(drakvuf, nullptr, this, system_service_handler_hook_cb, bp.for_syscall_name("KiSystemServiceHandler")) ||
-        !register_trap<userhook>(drakvuf, nullptr, this, terminate_process_hook_cb, bp.for_syscall_name("NtTerminateProcess")) ||
-        !register_trap<userhook>(drakvuf, nullptr, this, copy_on_write_handler, bp.for_syscall_name("MiCopyOnWrite")))
+    if (!register_trap(nullptr, protect_virtual_memory_hook_cb, bp.for_syscall_name("NtProtectVirtualMemory")) ||
+        !register_trap(nullptr, map_view_of_section_hook_cb, bp.for_syscall_name("NtMapViewOfSection")) ||
+        !register_trap(nullptr, system_service_handler_hook_cb, bp.for_syscall_name("KiSystemServiceHandler")) ||
+        !register_trap(nullptr, terminate_process_hook_cb, bp.for_syscall_name("NtTerminateProcess")) ||
+        !register_trap(nullptr, copy_on_write_handler, bp.for_syscall_name("MiCopyOnWrite")))
     {
         return USERMODE_REGISTER_ERROR;
     }
@@ -815,14 +792,14 @@ usermode_reg_status_t userhook::init(drakvuf_t drakvuf)
     return USERMODE_REGISTER_SUCCESS;
 }
 
-void userhook::request_usermode_hook(drakvuf_t drakvuf, const dll_view_t* dll, target_hook_type type, const char* func_name, addr_t offset, callback_t callback, const std::vector< std::unique_ptr < ArgumentPrinter > > &argument_printers, void* extra)
+void userhook::request_usermode_hook(drakvuf_t drakvuf, const dll_view_t* dll, const plugin_target_config_entry_t* target, callback_t callback, void* extra)
 {
     dll_t* p_dll = (dll_t*)const_cast<dll_view_t*>(dll);
 
-    if (type == HOOK_BY_NAME)
-        p_dll->targets.emplace_back(func_name, callback, argument_printers, extra);
+    if (target->type == HOOK_BY_NAME)
+        p_dll->targets.emplace_back(target->function_name, target->clsid, callback, target->argument_printers, extra);
     else // HOOK_BY_OFFSET
-        p_dll->targets.emplace_back(func_name, offset, callback, argument_printers, extra);
+        p_dll->targets.emplace_back(target->function_name, target->clsid, target->offset, callback, target->argument_printers, extra);
 }
 
 void userhook::register_plugin(drakvuf_t drakvuf, usermode_cb_registration reg)
@@ -851,11 +828,13 @@ usermode_reg_status_t drakvuf_register_usermode_callback(drakvuf_t drakvuf, user
 {
     usermode_reg_status_t ret = USERMODE_REGISTER_ERROR;
 
-    if (!instance) {
+    if (!instance)
+    {
         instance = new userhook(drakvuf);
     }
 
-    if (!instance->initialized) {
+    if (!instance->initialized)
+    {
         ret = instance->init(drakvuf);
 
         if (ret != USERMODE_REGISTER_SUCCESS)
@@ -866,30 +845,46 @@ usermode_reg_status_t drakvuf_register_usermode_callback(drakvuf_t drakvuf, user
     return USERMODE_REGISTER_SUCCESS;
 }
 
-bool drakvuf_request_usermode_hook(drakvuf_t drakvuf, const dll_view_t* dll, target_hook_type type, const char* func_name, addr_t offset, callback_t callback, const std::vector < std::unique_ptr < ArgumentPrinter > > &argument_printers, void* extra)
+bool drakvuf_request_usermode_hook(drakvuf_t drakvuf, const dll_view_t* dll, const plugin_target_config_entry_t* target, callback_t callback, void* extra)
 {
-    if (!instance || !instance->initialized) {
+    if (!instance || !instance->initialized)
+    {
         return false;
     }
 
-    instance->request_usermode_hook(drakvuf, dll, type, func_name, offset, callback, argument_printers, extra);
+    instance->request_usermode_hook(drakvuf, dll, target, callback, extra);
     return true;
 }
 
-void drakvuf_load_dll_hook_config(drakvuf_t drakvuf, const char* dll_hooks_list_path, std::vector<plugin_target_config_entry_t>* wanted_hooks)
+std::optional<HookActions> get_hook_actions(const std::string& str)
+{
+    if (str == "log")
+    {
+        return HookActions::empty().set_log();
+    }
+    else if (str == "log+stack")
+    {
+        return HookActions::empty().set_log().set_stack();
+    }
+
+    return std::nullopt;
+}
+
+void drakvuf_load_dll_hook_config(drakvuf_t drakvuf, const char* dll_hooks_list_path, const bool print_no_addr, std::vector<plugin_target_config_entry_t>* wanted_hooks)
 {
     if (!dll_hooks_list_path)
     {
+        const auto log_and_stack = HookActions::empty().set_log().set_stack();
         // if the DLL hook list was not provided, we provide some simple defaults
         std::vector< std::unique_ptr < ArgumentPrinter > > arg_vec1;
-        arg_vec1.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter()));
-        arg_vec1.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter()));
-        wanted_hooks->emplace_back("ws2_32.dll", "WSAStartup", "log+stack", std::move(arg_vec1));
+        arg_vec1.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("wVersionRequired", print_no_addr)));
+        arg_vec1.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("lpWSAData", print_no_addr)));
+        wanted_hooks->emplace_back("ws2_32.dll", "WSAStartup", log_and_stack, std::move(arg_vec1));
 
         std::vector< std::unique_ptr < ArgumentPrinter > > arg_vec2;
-        arg_vec2.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter()));
-        arg_vec2.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter()));
-        wanted_hooks->emplace_back("ntdll.dll", "RtlExitUserProcess", "log+stack", std::move(arg_vec2));
+        arg_vec2.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("ExitCode", print_no_addr)));
+        arg_vec2.push_back(std::unique_ptr < ArgumentPrinter>(new ArgumentPrinter("Unknown", print_no_addr)));
+        wanted_hooks->emplace_back("ntdll.dll", "RtlExitUserProcess", log_and_stack, std::move(arg_vec2));
         return;
     }
 
@@ -909,9 +904,8 @@ void drakvuf_load_dll_hook_config(drakvuf_t drakvuf, const char* dll_hooks_list_
         std::stringstream ss(line);
 
         wanted_hooks->push_back(plugin_target_config_entry_t());
-        plugin_target_config_entry_t &e = wanted_hooks->back();
+        plugin_target_config_entry_t& e = wanted_hooks->back();
 
-        std::string arg_type;
         if (!std::getline(ss, e.dll_name, ',') || e.dll_name.empty())
             throw -1;
 
@@ -921,43 +915,92 @@ void drakvuf_load_dll_hook_config(drakvuf_t drakvuf, const char* dll_hooks_list_
         e.type = HOOK_BY_NAME;
 
         std::string log_strategy_or_offset;
-        if (!std::getline(ss, log_strategy_or_offset, ','))
-            throw -1;
-
-        if (log_strategy_or_offset == "log" || log_strategy_or_offset == "log+stack" || log_strategy_or_offset == "stack")
+        std::string token;
+        if (!std::getline(ss, token, ','))
         {
-            e.log_strategy = log_strategy_or_offset;
+            throw -1;
+        }
+
+        if (token == "clsid")
+        {
+            if (!std::getline(ss, e.clsid, ',') || e.clsid.empty())
+                throw -1;
+
+            if (!std::getline(ss, log_strategy_or_offset, ','))
+                throw -1;
+        }
+        else
+            log_strategy_or_offset = token;
+
+        std::optional<HookActions> actions = get_hook_actions(log_strategy_or_offset);
+        if (actions)
+        {
+            e.actions = *actions;
         }
         else
         {
             e.offset = std::stoull(log_strategy_or_offset, 0, 16);
             e.type = HOOK_BY_OFFSET;
 
-            if (!std::getline(ss, e.log_strategy, ',') || e.log_strategy.empty())
+            std::string strategy_name;
+            if (!std::getline(ss, strategy_name, ',') || strategy_name.empty())
                 throw -1;
 
-            if (e.log_strategy != "log" && e.log_strategy != "log+stack" && e.log_strategy != "stack")
+            actions = get_hook_actions(strategy_name);
+            if (!actions)
                 throw -1;
+
+            e.actions = *actions;
         }
 
-        while (std::getline(ss, arg_type, ',') && !arg_type.empty())
+        std::string arg;
+        size_t arg_idx = 0;
+        while (std::getline(ss, arg, ',') && !arg.empty())
         {
-            if (arg_type == "lpcstr" || arg_type == "lpctstr")
+            auto pos = arg.find_first_of(':');
+            std::string arg_name;
+            std::string arg_type;
+            if (pos == std::string::npos)
             {
-                e.argument_printers.push_back(std::unique_ptr< ArgumentPrinter>(new AsciiPrinter()));
-            }
-            else if (arg_type == "lpcwstr" || arg_type == "lpwstr")
-            {
-                e.argument_printers.push_back(std::unique_ptr< ArgumentPrinter>(new WideStringPrinter()));
-            }
-            else if (arg_type == "punicode_string")
-            {
-                e.argument_printers.push_back(std::unique_ptr< ArgumentPrinter>(new UnicodePrinter()));
+                arg_name = std::string("Arg") + std::to_string(arg_idx);
+                arg_type = arg;
             }
             else
             {
-                e.argument_printers.push_back(std::unique_ptr< ArgumentPrinter>(new ArgumentPrinter()));
+                arg_name = arg.substr(0, pos);
+                arg_type = arg.substr(pos + 1);
             }
+
+            if (arg_type == "lpcstr" || arg_type == "lpctstr")
+            {
+                e.argument_printers.push_back(std::unique_ptr< ArgumentPrinter>(new AsciiPrinter(arg_name, print_no_addr)));
+            }
+            else if (arg_type == "lpcwstr" || arg_type == "lpwstr" || arg_type == "bstr")
+            {
+                e.argument_printers.push_back(std::unique_ptr< ArgumentPrinter>(new WideStringPrinter(arg_name, print_no_addr)));
+            }
+            else if (arg_type == "punicode_string")
+            {
+                e.argument_printers.push_back(std::unique_ptr< ArgumentPrinter>(new UnicodePrinter(arg_name, print_no_addr)));
+            }
+            else if (arg_type == "pulong")
+            {
+                e.argument_printers.push_back(std::unique_ptr< ArgumentPrinter>(new UlongPrinter(arg_name, print_no_addr)));
+            }
+            else if (arg_type == "lpvoid*")
+            {
+                e.argument_printers.push_back(std::unique_ptr< ArgumentPrinter>(new PointerToPointerPrinter(arg_name, print_no_addr)));
+            }
+            else if (arg_type == "refclsid" || arg_type == "refiid")
+            {
+                e.argument_printers.push_back(std::unique_ptr< ArgumentPrinter>(new GuidPrinter(arg_name, print_no_addr)));
+            }
+            else
+            {
+                e.argument_printers.push_back(std::unique_ptr< ArgumentPrinter>(new ArgumentPrinter(arg_name, print_no_addr)));
+            }
+
+            ++arg_idx;
         }
     }
 }

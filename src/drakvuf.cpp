@@ -168,10 +168,11 @@ drakvuf_c::drakvuf_c(const char* domain,
                      bool verbose,
                      bool leave_paused,
                      bool libvmi_conf,
-                     addr_t kpgd)
+                     addr_t kpgd,
+                     bool fast_singlestep)
     : leave_paused{ leave_paused }
 {
-    if (!drakvuf_init(&drakvuf, domain, json_kernel_path, json_wow_path, verbose, libvmi_conf, kpgd))
+    if (!drakvuf_init(&drakvuf, domain, json_kernel_path, json_wow_path, verbose, libvmi_conf, kpgd, fast_singlestep))
     {
         drakvuf_close(drakvuf, leave_paused);
         throw std::runtime_error("drakvuf_init() failed");
@@ -187,10 +188,10 @@ drakvuf_c::~drakvuf_c()
 
     g_free(injector_to_be_freed);
 
+    delete plugins;
+
     if (drakvuf)
         drakvuf_close(drakvuf, leave_paused);
-
-    delete plugins;
 }
 
 void drakvuf_c::interrupt(int signal)
@@ -217,34 +218,35 @@ void drakvuf_c::resume()
 }
 
 injector_status_t drakvuf_c::inject_cmd(vmi_pid_t injection_pid,
-                          uint32_t injection_tid,
-                          const char* inject_cmd,
-                          const char* cwd,
-                          injection_method_t method,
-                          output_format_t format,
-                          const char* binary_path,
-                          const char* target_process,
-                          int timeout,
-                          bool global_search,
-                          int args_count,
-                          const char* args[])
+                                        uint32_t injection_tid,
+                                        const char* inject_cmd,
+                                        const char* cwd,
+                                        injection_method_t method,
+                                        output_format_t format,
+                                        const char* binary_path,
+                                        const char* target_process,
+                                        int timeout,
+                                        bool global_search,
+                                        int args_count,
+                                        const char* args[])
 {
     GThread* timeout_thread = startup_timer(this, timeout);
 
     auto rc = injector_start_app(drakvuf,
-                                injection_pid,
-                                injection_tid,
-                                inject_cmd,
-                                cwd,
-                                method,
-                                format,
-                                binary_path,
-                                target_process,
-                                true,
-                                &injector_to_be_freed,
-                                global_search,
-                                args_count,
-                                args);
+                                 injection_pid,
+                                 injection_tid,
+                                 inject_cmd,
+                                 cwd,
+                                 method,
+                                 format,
+                                 binary_path,
+                                 target_process,
+                                 true,
+                                 &injector_to_be_freed,
+                                 global_search,
+                                 false,
+                                 args_count,
+                                 args);
 
 
     if (INJECTOR_SUCCEEDED != rc)

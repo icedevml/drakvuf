@@ -190,13 +190,14 @@ int main(int argc, char** argv)
     sigaction(SIGINT, &act, NULL);
     sigaction(SIGALRM, &act, NULL);
 
-    if (!drakvuf_init(&drakvuf, domain, json_kernel_path, NULL, verbose, libvmi_conf, kpgd))
+    if (!drakvuf_init(&drakvuf, domain, json_kernel_path, NULL, verbose, libvmi_conf, kpgd, false))
     {
         fprintf(stderr, "Failed to initialize on domain %s\n", domain);
         return 1;
     }
 
-    drakvuf_trap_t inject_trap = {
+    drakvuf_trap_t inject_trap =
+    {
         .type = REGISTER,
         .reg = CR3,
         .cb = &repl_start,

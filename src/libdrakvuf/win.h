@@ -136,7 +136,7 @@ unicode_string_t* win_get_process_csdversion(drakvuf_t drakvuf, addr_t eprocess_
 
 int64_t win_get_current_process_userid(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
 
-bool win_get_process_dtb(drakvuf_t drakvuf, addr_t process_base, addr_t *dtb);
+bool win_get_process_dtb(drakvuf_t drakvuf, addr_t process_base, addr_t* dtb);
 
 bool win_get_current_thread_id(drakvuf_t drakvuf, drakvuf_trap_info_t* info, uint32_t* thread_id);
 
@@ -175,7 +175,7 @@ char* win_get_filename_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info,
 
 bool win_is_wow64(drakvuf_t drakvuf, drakvuf_trap_info_t* info);
 
-addr_t win_get_function_argument(drakvuf_t drakvuf, drakvuf_trap_info_t* info, int argument_number);
+addr_t win_get_function_argument(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t argument_number);
 
 bool win_inject_traps_modules(drakvuf_t drakvuf, drakvuf_trap_t* trap, addr_t list_head, vmi_pid_t pid);
 
@@ -187,6 +187,7 @@ uint64_t win_mmvad_commit_charge(drakvuf_t drakvuf, mmvad_info_t* mmvad, uint64_
 uint32_t win_mmvad_type(drakvuf_t drakvuf, mmvad_info_t* mmvad);
 
 bool win_get_pid_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle, vmi_pid_t* pid);
+bool win_get_tid_from_handle(drakvuf_t drakvuf, drakvuf_trap_info_t* info, addr_t handle, uint32_t* tid);
 
 addr_t win_get_wow_peb(drakvuf_t drakvuf, access_context_t* ctx, addr_t eprocess);
 bool win_get_wow_context(drakvuf_t drakvuf, addr_t ethread, addr_t* wow_ctx);

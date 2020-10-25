@@ -126,6 +126,10 @@ if PLUGIN_FILETRACER
 sources += filetracer/filetracer.cpp
 sources += filetracer/filetracer.h
 sources += filetracer/private.h
+sources += filetracer/linux.cpp
+sources += filetracer/linux.h
+sources += filetracer/win.cpp
+sources += filetracer/win.h
 sources += filetracer/win_acl.cpp
 sources += filetracer/win_acl.h
 endif
@@ -260,8 +264,15 @@ sources += procdump/writer.h
 sources += procdump/minidump.h
 endif
 
+if PLUGIN_RPCMON
+sources += rpcmon/rpcmon.cpp
+sources += rpcmon/rpcmon.h
+endif
+
 ###############################################################################
-sources += plugins.cpp plugins.h plugins_ex.cpp plugins_ex.h plugin_utils.cpp plugin_utils.h private.h output_format.h
+sources += plugins.cpp plugins.h plugins_ex.cpp plugins_ex.h plugin_utils.cpp plugin_utils.h private.h type_traits_helpers.h
+sources += output_format.h output_format/common.h output_format/csvfmt.h output_format/deffmt.h output_format/jsonfmt.h output_format/kvfmt.h
+sources += output_format/xfmt.h output_format/ostream.h output_format/ostream.cpp
 
 AM_CPPFLAGS = -I$(top_srcdir) -I$(top_srcdir)/src -I$(srcdir)
 AM_CPPFLAGS += $(CPPFLAGS)

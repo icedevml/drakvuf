@@ -128,24 +128,46 @@ extern bool verbose;
 #endif
 
 injector_status_t injector_start_app_on_linux(drakvuf_t drakvuf,
-                                vmi_pid_t pid,
-                                uint32_t tid, // optional, if tid=0 the first thread that gets scheduled is used i.e, tid = pid
-                                const char* app,
-                                injection_method_t method,
-                                output_format_t format,
-                                int args_count,
-                                const char* args[]);
+        vmi_pid_t pid,
+        uint32_t tid, // optional, if tid=0 the first thread that gets scheduled is used i.e, tid = pid
+        const char* app,
+        injection_method_t method,
+        output_format_t format,
+        int args_count,
+        const char* args[]);
 
 
 injector_status_t injector_start_app_on_win(drakvuf_t drakvuf,
-                              vmi_pid_t pid,
-                              uint32_t tid,
-                              const char* app,
-                              const char* cwd,
-                              injection_method_t method,
-                              output_format_t format,
-                              const char* binary_path,
-                              const char* target_process,
-                              bool break_loop_on_detection,
-                              injector_t* injector_to_be_freed,
-                              bool global_search);
+        vmi_pid_t pid,
+        uint32_t tid,
+        const char* app,
+        const char* cwd,
+        injection_method_t method,
+        output_format_t format,
+        const char* binary_path,
+        const char* target_process,
+        bool break_loop_on_detection,
+        injector_t* injector_to_be_freed,
+        bool global_search,
+        bool wait_for_exit);
+
+static inline void copy_gprs(registers_t* dst, registers_t* src)
+{
+    dst->x86.rip = src->x86.rip;
+    dst->x86.rsp = src->x86.rsp;
+    dst->x86.rbp = src->x86.rbp;
+    dst->x86.rax = src->x86.rax;
+    dst->x86.rbx = src->x86.rbx;
+    dst->x86.rcx = src->x86.rcx;
+    dst->x86.rdx = src->x86.rdx;
+    dst->x86.rdi = src->x86.rdi;
+    dst->x86.rsi = src->x86.rsi;
+    dst->x86.r8 = src->x86.r8;
+    dst->x86.r9 = src->x86.r9;
+    dst->x86.r10 = src->x86.r10;
+    dst->x86.r11 = src->x86.r11;
+    dst->x86.r12 = src->x86.r12;
+    dst->x86.r13 = src->x86.r13;
+    dst->x86.r14 = src->x86.r14;
+    dst->x86.r15 = src->x86.r15;
+}
